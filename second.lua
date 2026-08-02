@@ -77,7 +77,7 @@ local function SendFeedback(kind, message)
 end
 
 -- ══════════════════════════════════════════════════════════════
--- SERVER HOP & ITEM LOGIC
+-- SERVER HOP LOGIC
 -- ══════════════════════════════════════════════════════════════
 
 local HOP_HISTORY_FILE = "AnimeAstralHopHistory.json"
@@ -155,39 +155,50 @@ local function genericServerHop(statusCallback)
     end
 end
 
-local function interactWithPrompt(prompt)
-    if not prompt then return end
-    pcall(function()
-        prompt.RequiresLineOfSight = false
-        prompt.MaxActivationDistance = 9999
-        prompt.HoldDuration = 0
-    end)
+-- ══════════════════════════════════════════════════════════════
+-- COMMANDMENT DETECTION & COLLECTION
+-- ══════════════════════════════════════════════════════════════
 
-    if typeof(fireproximityprompt) == "function" then
-        pcall(fireproximityprompt, prompt)
-    else
-        pcall(function()
-            if prompt.InputHoldBegan then
-                prompt:InputHoldBegan()
-                task.wait(0.02)
-                if prompt.InputHoldEnded then prompt:InputHoldEnded() end
-            else
-                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-                task.wait(0.02)
-                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-            end
-        end)
+local COMMANDMENT_NAMES = {
+    "faith", "pacifism", "piety", "purity", "repose", 
+    "retience", "reticence", "selflessness", "truth", "chastity"
+}
+
+local function isCommandmentModel(obj)
+    if not obj or not obj.Parent then return false end
+
+    local nameLower = obj.Name:lower()
+    
+    -- Исключаем папки и декорации карт
+    if nameLower:find("world") or nameLower:find("folder") or nameLower:find("spawner") or nameLower:find("map") then
+        return false
     end
+
+    -- 1. Прямое совпадение по имени объекта
+    for _, name in ipairs(COMMANDMENT_NAMES) do
+        if nameLower == name or nameLower:find(name) then
+            return true
+        end
+    end
+
+    -- 2. Проверка текста на табличке над предметом (BillboardGui)
+    local textLabel = obj:FindFirstChildWhichIsA("TextLabel", true)
+    if textLabel and textLabel.Text then
+        local txt = textLabel.Text:lower()
+        for _, name in ipairs(COMMANDMENT_NAMES) do
+            if txt:find(name) then return true end
+        end
+    end
+
+    return false
 end
 
-local function collectTarget(targetObj)
+local function collectCommandment(targetObj)
     if not targetObj or not targetObj.Parent then return false end
     local rootPart = getRootPart()
     if not rootPart then return false end
 
-    local prompt = targetObj:FindFirstChildWhichIsA("ProximityPrompt", true)
-    if not prompt then return false end
-
+    -- Вычисляем позицию
     local targetCFrame
     if targetObj:IsA("Model") then
         local part = targetObj:FindFirstChildWhichIsA("BasePart", true)
@@ -198,50 +209,47 @@ local function collectTarget(targetObj)
 
     if not targetCFrame then return false end
 
-    rootPart.CFrame = targetCFrame + Vector3.new(0, 2, 0)
+    -- ТП персонажа на предмет
+    rootPart.CFrame = targetCFrame
     rootPart.AssemblyLinearVelocity = Vector3.zero
-    task.wait(0.1)
 
-    interactWithPrompt(prompt)
+    -- Попытка 1: Через ProximityPrompt (если есть)
+    local prompt = targetObj:FindFirstChildWhichIsA("ProximityPrompt", true)
+    if prompt then
+        pcall(function()
+            prompt.RequiresLineOfSight = false
+            prompt.MaxActivationDistance = 9999
+            prompt.HoldDuration = 0
+        end)
+
+        if typeof(fireproximityprompt) == "function" then
+            pcall(fireproximityprompt, prompt)
+        else
+            pcall(function()
+                if prompt.InputHoldBegan then
+                    prompt:InputHoldBegan()
+                    task.wait(0.02)
+                    if prompt.InputHoldEnded then prompt:InputHoldEnded() end
+                else
+                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+                    task.wait(0.02)
+                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+                end
+            end)
+        end
+    end
+
+    -- Попытка 2: Эмуляция касания (TouchInterest)
+    local targetPart = targetObj:IsA("BasePart") and targetObj or targetObj:FindFirstChildWhichIsA("BasePart", true)
+    if targetPart and typeof(firetouchinterest) == "function" then
+        pcall(function()
+            firetouchinterest(rootPart, targetPart, 0)
+            task.wait(0.05)
+            firetouchinterest(rootPart, targetPart, 1)
+        end)
+    end
+
     return true
-end
-
--- ══════════════════════════════════════════════════════════════
--- SEARCH HELPERS
--- ══════════════════════════════════════════════════════════════
-
-local COMMANDMENT_NAMES = {
-    "faith", "pacifism", "piety", "purity", "repose", 
-    "retience", "reticence", "selflessness", "truth", "commandment"
-}
-
-local function isCommandmentModel(obj)
-    if not obj then return false end
-    local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
-    if not prompt then return false end
-
-    local nameLower = obj.Name:lower()
-    for _, name in ipairs(COMMANDMENT_NAMES) do
-        if nameLower:find(name) then return true end
-    end
-
-    if obj.Parent then
-        local parentLower = obj.Parent.Name:lower()
-        for _, name in ipairs(COMMANDMENT_NAMES) do
-            if parentLower:find(name) then return true end
-        end
-    end
-
-    -- Проверка BillboardGui / TextLabel внутри модели
-    local textLabel = obj:FindFirstChildWhichIsA("TextLabel", true)
-    if textLabel and textLabel.Text then
-        local txt = textLabel.Text:lower()
-        for _, name in ipairs(COMMANDMENT_NAMES) do
-            if txt:find(name) then return true end
-        end
-    end
-
-    return false
 end
 
 -- ══════════════════════════════════════════════════════════════
@@ -272,15 +280,12 @@ local Tabs = {
 
 local Options = Fluent.Options
 
--- Changelog
-Tabs.Changelog:AddParagraph({ Title = "Update Log", Content = "- Added Commandments Auto Collect & Server Hop\n- Optimized prompt collection" })
-
 -- Feedback UI
 local BugSection = Tabs.Feedback:AddSection("Bug report")
 local BugInput = BugSection:AddInput("BugInput", { Title = "Submit", Placeholder = "Describe the bug..." })
 BugSection:AddButton({ Title = "Send bug report", Callback = function() SendFeedback("bug", BugInput.Value) end })
 
--- Ball / Crow Tab (ОРИГИНАЛЬНАЯ)
+-- Ball / Crow Tab
 Tabs.BallCrow:AddSection("Auto Collect Special Items")
 Tabs.BallCrow:AddToggle("AutoCollectBall", { Title = "Auto Collect Ball", Default = false })
 Tabs.BallCrow:AddToggle("AutoBallServerHop", { Title = "Auto Server Hop (Ball)", Default = false })
@@ -289,7 +294,7 @@ local BallStatusParagraph = Tabs.BallCrow:AddParagraph({ Title = "Status", Conte
 Tabs.BallCrow:AddToggle("AutoCollectCrow", { Title = "Auto Collect Crow", Default = false })
 Tabs.BallCrow:AddToggle("AutoCrowServerHop", { Title = "Auto Server Hop (Crow)", Default = false })
 
--- Commandments Tab (НОВАЯ ВКЛАДКА)
+-- Commandments Tab
 Tabs.Commandments:AddSection("Auto Collect Commandments")
 Tabs.Commandments:AddToggle("AutoCollectCommandments", { Title = "Auto Collect Commandments", Default = false })
 Tabs.Commandments:AddToggle("AutoCommandmentServerHop", { Title = "Auto Server Hop (Commandments)", Default = false })
@@ -299,7 +304,7 @@ local CommandmentStatusParagraph = Tabs.Commandments:AddParagraph({ Title = "Sta
 -- MAIN LOOPS
 -- ══════════════════════════════════════════════════════════════
 
--- Логика Ball / Crow (Оригинальная)
+-- Ball / Crow Loop
 task.spawn(function()
     while task.wait(0.5) do
         if Options.AutoCollectBall and Options.AutoCollectBall.Value then
@@ -308,7 +313,7 @@ task.spawn(function()
                 if obj.Name:lower():find("ball") and obj:FindFirstChildWhichIsA("ProximityPrompt", true) then
                     found = true
                     BallStatusParagraph:SetDesc("Status: Collecting Ball (" .. obj.Name .. ")")
-                    collectTarget(obj)
+                    collectCommandment(obj)
                     task.wait(0.5)
                     break
                 end
@@ -327,7 +332,7 @@ task.spawn(function()
                 if obj.Name:lower():find("crow") and obj:FindFirstChildWhichIsA("ProximityPrompt", true) then
                     found = true
                     BallStatusParagraph:SetDesc("Status: Collecting Crow (" .. obj.Name .. ")")
-                    collectTarget(obj)
+                    collectCommandment(obj)
                     task.wait(0.5)
                     break
                 end
@@ -342,7 +347,7 @@ task.spawn(function()
     end
 end)
 
--- Логика Commandments (Новая)
+-- Commandments Loop
 task.spawn(function()
     while task.wait(0.5) do
         if Options.AutoCollectCommandments and Options.AutoCollectCommandments.Value then
@@ -350,8 +355,8 @@ task.spawn(function()
             for _, obj in ipairs(workspace:GetDescendants()) do
                 if isCommandmentModel(obj) then
                     found = true
-                    CommandmentStatusParagraph:SetDesc("Status: Collecting Commandment (" .. obj.Name .. ")")
-                    collectTarget(obj)
+                    CommandmentStatusParagraph:SetDesc("Status: Collecting " .. obj.Name)
+                    collectCommandment(obj)
                     task.wait(0.5)
                     break
                 end
@@ -381,6 +386,6 @@ SaveManager:SetFolder("AnimeAstralConfig/main")
 InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
-Window:SelectTab(1)
-Fluent:Notify({ Title = "Anime Astral", Content = "Script updated with Commandments tab!", Duration = 4 })
+Window:SelectTab(4)
+Fluent:Notify({ Title = "Anime Astral", Content = "Commandments collector updated!", Duration = 4 })
 SaveManager:LoadAutoloadConfig()
