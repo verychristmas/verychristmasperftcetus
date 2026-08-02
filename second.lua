@@ -21,8 +21,12 @@ local HttpService = game:GetService("HttpService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 
+local function getCharacter()
+    return LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+end
+
 local function getRootPart()
-    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local char = getCharacter()
     return char and char:FindFirstChild("HumanoidRootPart")
 end
 
@@ -169,19 +173,16 @@ local function isCommandmentModel(obj)
 
     local nameLower = obj.Name:lower()
     
-    -- Исключаем папки и декорации карт
     if nameLower:find("world") or nameLower:find("folder") or nameLower:find("spawner") or nameLower:find("map") then
         return false
     end
 
-    -- 1. Прямое совпадение по имени объекта
     for _, name in ipairs(COMMANDMENT_NAMES) do
         if nameLower == name or nameLower:find(name) then
             return true
         end
     end
 
-    -- 2. Проверка текста на табличке над предметом (BillboardGui)
     local textLabel = obj:FindFirstChildWhichIsA("TextLabel", true)
     if textLabel and textLabel.Text then
         local txt = textLabel.Text:lower()
@@ -195,10 +196,11 @@ end
 
 local function collectCommandment(targetObj)
     if not targetObj or not targetObj.Parent then return false end
+    local char = getCharacter()
     local rootPart = getRootPart()
-    if not rootPart then return false end
+    if not char or not rootPart then return false end
 
-    -- Вычисляем позицию
+    -- Находим точные координаты
     local targetCFrame
     if targetObj:IsA("Model") then
         local part = targetObj:FindFirstChildWhichIsA("BasePart", true)
@@ -209,44 +211,53 @@ local function collectCommandment(targetObj)
 
     if not targetCFrame then return false end
 
-    -- ТП персонажа на предмет
-    rootPart.CFrame = targetCFrame
-    rootPart.AssemblyLinearVelocity = Vector3.zero
+    -- Телепортируем персонажа на предмет
+    pcall(function()
+        char:PivotTo(targetCFrame)
+        rootPart.AssemblyLinearVelocity = Vector3.zero
+    end)
 
-    -- Попытка 1: Через ProximityPrompt (если есть)
-    local prompt = targetObj:FindFirstChildWhichIsA("ProximityPrompt", true)
-    if prompt then
-        pcall(function()
-            prompt.RequiresLineOfSight = false
-            prompt.MaxActivationDistance = 9999
-            prompt.HoldDuration = 0
-        end)
+    -- Делаем до 3 быстрыx попыток забрать предмет
+    for attempt = 1, 3 do
+        if not targetObj or not targetObj.Parent then break end
 
-        if typeof(fireproximityprompt) == "function" then
-            pcall(fireproximityprompt, prompt)
-        else
+        -- Попытка ProximityPrompt
+        local prompt = targetObj:FindFirstChildWhichIsA("ProximityPrompt", true)
+        if prompt then
             pcall(function()
-                if prompt.InputHoldBegan then
-                    prompt:InputHoldBegan()
-                    task.wait(0.02)
-                    if prompt.InputHoldEnded then prompt:InputHoldEnded() end
-                else
-                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-                    task.wait(0.02)
-                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-                end
+                prompt.RequiresLineOfSight = false
+                prompt.MaxActivationDistance = 9999
+                prompt.HoldDuration = 0
+            end)
+
+            if typeof(fireproximityprompt) == "function" then
+                pcall(fireproximityprompt, prompt)
+            else
+                pcall(function()
+                    if prompt.InputHoldBegan then
+                        prompt:InputHoldBegan()
+                        task.wait(0.02)
+                        if prompt.InputHoldEnded then prompt:InputHoldEnded() end
+                    else
+                        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+                        task.wait(0.02)
+                        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+                    end
+                end)
+            end
+        end
+
+        -- Попытка TouchInterest
+        local targetPart = targetObj:IsA("BasePart") and targetObj or targetObj:FindFirstChildWhichIsA("BasePart", true)
+        if targetPart and typeof(firetouchinterest) == "function" then
+            pcall(function()
+                firetouchinterest(rootPart, targetPart, 0)
+                task.wait(0.02)
+                firetouchinterest(rootPart, targetPart, 1)
             end)
         end
-    end
 
-    -- Попытка 2: Эмуляция касания (TouchInterest)
-    local targetPart = targetObj:IsA("BasePart") and targetObj or targetObj:FindFirstChildWhichIsA("BasePart", true)
-    if targetPart and typeof(firetouchinterest) == "function" then
-        pcall(function()
-            firetouchinterest(rootPart, targetPart, 0)
-            task.wait(0.05)
-            firetouchinterest(rootPart, targetPart, 1)
-        end)
+        task.wait(0.2)
     end
 
     return true
@@ -314,7 +325,7 @@ task.spawn(function()
                     found = true
                     BallStatusParagraph:SetDesc("Status: Collecting Ball (" .. obj.Name .. ")")
                     collectCommandment(obj)
-                    task.wait(0.5)
+                    task.wait(0.3)
                     break
                 end
             end
@@ -333,7 +344,7 @@ task.spawn(function()
                     found = true
                     BallStatusParagraph:SetDesc("Status: Collecting Crow (" .. obj.Name .. ")")
                     collectCommandment(obj)
-                    task.wait(0.5)
+                    task.wait(0.3)
                     break
                 end
             end
@@ -357,7 +368,7 @@ task.spawn(function()
                     found = true
                     CommandmentStatusParagraph:SetDesc("Status: Collecting " .. obj.Name)
                     collectCommandment(obj)
-                    task.wait(0.5)
+                    task.wait(0.3)
                     break
                 end
             end
@@ -387,5 +398,5 @@ InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
 Window:SelectTab(4)
-Fluent:Notify({ Title = "Anime Astral", Content = "Commandments collector updated!", Duration = 4 })
+Fluent:Notify({ Title = "Anime Astral", Content = "Commandments logic fixed!", Duration = 4 })
 SaveManager:LoadAutoloadConfig()
