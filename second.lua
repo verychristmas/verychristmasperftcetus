@@ -181,19 +181,12 @@ local function genericServerHop(statusCallback)
 end
 
 -- ══════════════════════════════════════════════════════════════
--- COMMANDMENT DETECTION & COLLECTION LOGIC (v1.3.2 OFFSETS)
+-- COMMANDMENT DETECTION & COLLECTION LOGIC (v1.3.3)
 -- ══════════════════════════════════════════════════════════════
 
 local EXACT_10_COMMANDMENTS = {
     "faith", "love", "pacifism", "patience", "piety",
     "purity", "repose", "retience", "reticence", "selflessness", "truth"
-}
-
-local IGNORE_KEYWORDS = {
-    "portal", "raid", "gate", "door", "zone", "teleport", 
-    "shop", "npc", "spawn", "gui", "ui", "hud", "asta", 
-    "quest", "dialog", "humanoid", "player", "clover", "machine",
-    "button", "board", "stat"
 }
 
 local collectedObjects = {}
@@ -203,21 +196,9 @@ local function isCommandmentModel(obj)
     if collectedObjects[obj] then return false end
     if not obj:IsDescendantOf(workspace) then return false end
 
-    if obj:IsA("UIComponent") or obj:IsA("GuiObject") or obj:IsA("LayerCollector") then return false end
-
-    if obj:FindFirstChildOfClass("Humanoid") then return false end
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player.Character and obj:IsDescendantOf(player.Character) then
-            return false
-        end
-    end
-
-    local fullNameLower = obj:GetFullName():lower()
-    for _, badWord in ipairs(IGNORE_KEYWORDS) do
-        if fullNameLower:find(badWord) then
-            return false
-        end
-    end
+    -- Проверяем, находится ли объект в специальной папке или воркспейсе
+    local isTargetFolder = obj:IsDescendantOf(workspace:FindFirstChild("World12Commandments") or workspace)
+    if not isTargetFolder then return false end
 
     local nameLower = obj.Name:lower()
     local matchFound = false
@@ -230,7 +211,10 @@ local function isCommandmentModel(obj)
     end
 
     if not matchFound then return false end
-    return obj:IsA("Model") or obj:IsA("BasePart") or obj:IsA("Tool")
+
+    -- Ищем ProximityPrompt внутри
+    local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
+    return prompt ~= nil
 end
 
 local function collectCommandment(targetObj)
@@ -238,8 +222,6 @@ local function collectCommandment(targetObj)
     local char = getCharacter()
     local rootPart = getRootPart()
     if not char or not rootPart then return false end
-
-    collectedObjects[targetObj] = true
 
     local targetPos
     if targetObj:IsA("Model") then
@@ -251,17 +233,17 @@ local function collectCommandment(targetObj)
 
     if not targetPos then return false end
 
-    -- ТП на расстоянии 3.5 блоков перед предметом и разворот к нему лица (чтобы RAYCAST игры регистрировал взгляд)
-    local standCFrame = CFrame.lookAt(targetPos + Vector3.new(0, 1.5, 3.5), targetPos)
+    -- ТП прямо к предмету (чуть выше и с поворотом)
+    local standCFrame = CFrame.lookAt(targetPos + Vector3.new(0, 1, 2), targetPos)
 
     pcall(function()
         char:PivotTo(standCFrame)
         rootPart.AssemblyLinearVelocity = Vector3.zero
     end)
     
-    task.wait(0.2)
+    -- Даём 0.3 сек серверу зарегистрировать персонажа рядом
+    task.wait(0.3)
 
-    -- Поиск ProximityPrompt
     local prompt = targetObj:FindFirstChildWhichIsA("ProximityPrompt", true) 
         or (targetObj.Parent and targetObj.Parent:FindFirstChildWhichIsA("ProximityPrompt", true))
 
@@ -275,6 +257,7 @@ local function collectCommandment(targetObj)
 
         task.wait(0.05)
 
+        -- Вызов ProximityPrompt
         if typeof(fireproximityprompt) == "function" then
             pcall(fireproximityprompt, prompt)
         end
@@ -282,7 +265,7 @@ local function collectCommandment(targetObj)
         pcall(function()
             if prompt.InputHoldBegan then
                 prompt:InputHoldBegan()
-                task.wait(0.1)
+                task.wait(0.05)
                 prompt:InputHoldEnded()
             end
         end)
@@ -294,7 +277,7 @@ local function collectCommandment(targetObj)
         end)
     end
 
-    -- TouchInterest
+    -- Дополнительно: касание хитбокса
     local targetPart = targetObj:IsA("BasePart") and targetObj or targetObj:FindFirstChildWhichIsA("BasePart", true)
     if targetPart and typeof(firetouchinterest) == "function" then
         pcall(function()
@@ -304,7 +287,14 @@ local function collectCommandment(targetObj)
         end)
     end
 
-    task.wait(0.5)
+    -- Ждем ответа от сервера
+    task.wait(0.8)
+
+    -- Если объект всё ещё существует после попытки, заносим в собранные на этом сервере, чтоб не спамить
+    if targetObj and targetObj.Parent then
+        collectedObjects[targetObj] = true
+    end
+
     return true
 end
 
@@ -318,7 +308,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title = "Anime Astral",
-    SubTitle = "v1.3.2 - LookAt & Standoff Fix",
+    SubTitle = "v1.3.3 - World12 Fix & Prompt Fix",
     TabWidth = 160,
     Size = UDim2.fromOffset(500, 320),
     Acrylic = false,
@@ -362,60 +352,23 @@ local CommandmentStatusParagraph = Tabs.Commandments:AddParagraph({ Title = "Sta
 
 local serverLoadedTime = tick()
 
--- Ball / Crow Loop
-task.spawn(function()
-    while task.wait(0.2) do
-        if Options.AutoCollectBall and Options.AutoCollectBall.Value then
-            local found = false
-            for _, obj in ipairs(workspace:GetDescendants()) do
-                if obj.Name:lower():find("ball") and isCommandmentModel(obj) and obj:FindFirstChildWhichIsA("ProximityPrompt", true) then
-                    found = true
-                    BallStatusParagraph:SetDesc("Status: Collecting Ball (" .. obj.Name .. ")")
-                    collectCommandment(obj)
-                    if Options.AutoBallServerHop and Options.AutoBallServerHop.Value then
-                        genericServerHop(function(msg) BallStatusParagraph:SetDesc("Status: " .. msg) end)
-                    end
-                    break
-                end
-            end
-            if not found and (tick() - serverLoadedTime > 3) then
-                BallStatusParagraph:SetDesc("Status: No Ball found on this server.")
-                if Options.AutoBallServerHop and Options.AutoBallServerHop.Value then
-                    genericServerHop(function(msg) BallStatusParagraph:SetDesc("Status: " .. msg) end)
-                end
-            end
-        end
-
-        if Options.AutoCollectCrow and Options.AutoCollectCrow.Value then
-            local found = false
-            for _, obj in ipairs(workspace:GetDescendants()) do
-                if obj.Name:lower():find("crow") and isCommandmentModel(obj) and obj:FindFirstChildWhichIsA("ProximityPrompt", true) then
-                    found = true
-                    BallStatusParagraph:SetDesc("Status: Collecting Crow (" .. obj.Name .. ")")
-                    collectCommandment(obj)
-                    if Options.AutoCrowServerHop and Options.AutoCrowServerHop.Value then
-                        genericServerHop(function(msg) BallStatusParagraph:SetDesc("Status: " .. msg) end)
-                    end
-                    break
-                end
-            end
-            if not found and (tick() - serverLoadedTime > 3) then
-                BallStatusParagraph:SetDesc("Status: No Crow found on this server.")
-                if Options.AutoCrowServerHop and Options.AutoCrowServerHop.Value then
-                    genericServerHop(function(msg) BallStatusParagraph:SetDesc("Status: " .. msg) end)
-                end
-            end
-        end
-    end
-end)
-
 -- Commandments Loop
 task.spawn(function()
-    while task.wait(0.25) do
+    while task.wait(0.3) do
         if Options.AutoCollectCommandments and Options.AutoCollectCommandments.Value then
+            -- Ждём минимум 4 секунды после реконнекта для загрузки сетевой части
+            if (tick() - serverLoadedTime) < 4 then
+                CommandmentStatusParagraph:SetDesc("Status: Waiting for server sync (BridgeNet2)...")
+                continue
+            end
+
             local target = nil
             
-            for _, obj in ipairs(workspace:GetDescendants()) do
+            -- Проверяем сначала специальную папку World12Commandments
+            local folder = workspace:FindFirstChild("World12Commandments")
+            local searchArea = folder and folder:GetDescendants() or workspace:GetDescendants()
+
+            for _, obj in ipairs(searchArea) do
                 if isCommandmentModel(obj) then
                     target = obj
                     break
@@ -423,17 +376,13 @@ task.spawn(function()
             end
 
             if target and target.Parent then
-                CommandmentStatusParagraph:SetDesc("Status: FOUND " .. target.Name .. "! Interacting...")
+                CommandmentStatusParagraph:SetDesc("Status: Collecting " .. target.Name)
                 collectCommandment(target)
-                task.wait(0.2)
+                task.wait(0.3)
             else
-                if (tick() - serverLoadedTime > 3) then
-                    CommandmentStatusParagraph:SetDesc("Status: No Commandments found. Hopping...")
-                    if Options.AutoCommandmentServerHop and Options.AutoCommandmentServerHop.Value then
-                        genericServerHop(function(msg) CommandmentStatusParagraph:SetDesc("Status: " .. msg) end)
-                    end
-                else
-                    CommandmentStatusParagraph:SetDesc("Status: Waiting for map stream...")
+                CommandmentStatusParagraph:SetDesc("Status: No Commandments found. Hopping...")
+                if Options.AutoCommandmentServerHop and Options.AutoCommandmentServerHop.Value then
+                    genericServerHop(function(msg) CommandmentStatusParagraph:SetDesc("Status: " .. msg) end)
                 end
             end
         end
@@ -455,5 +404,5 @@ InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
 Window:SelectTab(4)
-Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.3.2!", Duration = 4 })
+Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.3.3!", Duration = 4 })
 SaveManager:LoadAutoloadConfig()
