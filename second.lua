@@ -169,7 +169,7 @@ local function universalServerHop(statusCallback)
 end
 
 -- ══════════════════════════════════════════════════════════════
--- COMMANDMENT COLLECTION (Strict Anti-Phantom Filter)
+-- COMMANDMENT COLLECTION (Balanced Filter)
 -- ══════════════════════════════════════════════════════════════
 
 local EXACT_10_COMMANDMENTS = {
@@ -196,27 +196,12 @@ local function isCommandmentModel(obj)
 
     if not matchFound then return false end
 
-    -- Строгая проверка: у объекта обязательно должна быть реальная видимая деталь
+    -- Проверяем наличие любой базовой части с валидными координатами
     local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart", true)
     if not part then return false end
     
-    -- Проверка на фантомы: если деталь прозрачная на 100% или её размер нулевой, отсеиваем
-    local success, transparency = pcall(function() return part.Transparency end)
-    if success and transparency >= 0.99 then return false end
-
     local posSuccess, pos = pcall(function() return part.Position end)
     if not posSuccess or not pos or pos.Magnitude < 1 then return false end
-
-    -- Проверяем, есть ли вообще внутри ProximityPrompt или TouchInterest (чтобы не реагировать на пустые мусорные папки)
-    local hasPromptOrTouch = false
-    for _, desc in ipairs(obj:GetDescendants()) do
-        if desc:IsA("ProximityPrompt") or desc:IsA("TouchTransmitter") then
-            hasPromptOrTouch = true
-            break
-        end
-    end
-
-    if not hasPromptOrTouch then return false end
 
     return true
 end
@@ -286,10 +271,10 @@ local function collectCommandment(targetObj)
 
     collectedObjects[targetObj] = true
 
-    for attempt = 1, 2 do
+    for attempt = 1, 3 do
         if not targetObj or not targetObj.Parent then break end
         interactWithObject(targetObj)
-        task.wait(0.2)
+        task.wait(0.25)
     end
 
     return true
@@ -305,7 +290,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title = "Anime Astral",
-    SubTitle = "v1.3.8 - Strict Anti-Phantom",
+    SubTitle = "v1.3.9 - Balanced Filter",
     TabWidth = 160,
     Size = UDim2.fromOffset(500, 320),
     Acrylic = false,
@@ -379,5 +364,5 @@ InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
 Window:SelectTab(4)
-Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.3.8!", Duration = 4 })
+Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.3.9!", Duration = 4 })
 SaveManager:LoadAutoloadConfig()
