@@ -166,7 +166,7 @@ local function genericServerHop(statusCallback)
             else
                 break
             end
-            task.wait(0.5)
+            task.wait(0.3)
         end
 
         if not foundServer then
@@ -184,15 +184,18 @@ end
 -- COMMANDMENT DETECTION & COLLECTION
 -- ══════════════════════════════════════════════════════════════
 
-local COMMANDMENT_NAMES = {
-    "faith", "love", "pacifism", "patience", "piety", 
-    "purity", "repose", "retience", "reticence", "selflessness", 
-    "truth"
+local EXACT_COMMANDMENTS = {
+    ["faith"] = true, ["love"] = true, ["pacifism"] = true, 
+    ["patience"] = true, ["piety"] = true, ["purity"] = true, 
+    ["repose"] = true, ["retience"] = true, ["reticence"] = true, 
+    ["selflessness"] = true, ["truth"] = true
 }
 
-local IGNORED_KEYWORDS = {
-    "visual", "effect", "vfx", "gui", "display", "icon", 
-    "particle", "ui", "aura", "mesh", "texture", "clone"
+local BLACKLISTED_MAP_WORDS = {
+    "portal", "raid", "gate", "door", "zone", "teleport", 
+    "shop", "npc", "spawn", "visual", "effect", "vfx", 
+    "gui", "display", "icon", "particle", "ui", "aura", 
+    "mesh", "texture", "clone", "world", "folder", "map"
 }
 
 local blacklistedObjects = {}
@@ -202,7 +205,7 @@ local function isCommandmentModel(obj)
     if not obj or not obj.Parent then return false end
     if blacklistedObjects[obj] or collectedObjects[obj] then return false end
 
-    -- 1. Игнорируем камеру, GUI и всех игроков на сервере
+    -- 1. Игнорируем камеру, GUI и всех игроков
     if obj:IsDescendantOf(workspace.CurrentCamera) then return false end
     if obj:IsDescendantOf(game:GetService("CoreGui")) then return false end
 
@@ -214,37 +217,45 @@ local function isCommandmentModel(obj)
 
     local nameLower = obj.Name:lower()
 
-    -- 2. Игнорируем мусорные ключевые слова и системные папки
-    for _, badWord in ipairs(IGNORED_KEYWORDS) do
+    -- 2. Жесткий бан по картам, порталам, визуалу и мусору
+    for _, badWord in ipairs(BLACKLISTED_MAP_WORDS) do
         if nameLower:find(badWord) then
             return false
         end
     end
 
-    if nameLower:find("world") or nameLower:find("folder") or nameLower:find("spawner") or nameLower:find("map") then
+    -- 3. Проверяем точное название или прямое совпадение по заповедям
+    local matched = false
+
+    -- Чистое совпадение имени (напр. "Faith", "Love", "Commandment_Faith")
+    if EXACT_COMMANDMENTS[nameLower] then
+        matched = true
+    else
+        for commandmentName, _ in pairs(EXACT_COMMANDMENTS) do
+            if nameLower == commandmentName or nameLower == "commandment_" .. commandmentName or nameLower == "medal_" .. commandmentName then
+                matched = true
+                break
+            end
+        end
+    end
+
+    if not matched then return false end
+
+    -- 4. Дополнительная защита: у объекта ДОЛЖЕН быть ProximityPrompt или TouchInterest (или это Tool/MeshPart спавна)
+    local hasInteract = obj:FindFirstChildWhichIsA("ProximityPrompt", true) 
+                     or obj:FindFirstChildWhichIsA("TouchTransmitter", true)
+                     or obj:IsA("Tool")
+                     or obj:IsA("MeshPart")
+                     or obj:IsA("Part")
+
+    if not hasInteract then return false end
+
+    -- 5. Проверка размера (чтобы не прыгал на гигантские объекты)
+    if obj:IsA("BasePart") and (obj.Size.X > 20 or obj.Size.Y > 20 or obj.Size.Z > 20) then
         return false
     end
 
-    -- 3. Проверяем совпадение по имени
-    for _, name in ipairs(COMMANDMENT_NAMES) do
-        if nameLower == name or nameLower:find(name) then
-            return true
-        end
-    end
-
-    -- 4. Проверяем текст BillboardGui / TextLabel в мире
-    local textLabel = obj:FindFirstChildWhichIsA("TextLabel", true)
-    if textLabel and textLabel.Text then
-        local txt = textLabel.Text:lower()
-        for _, badWord in ipairs(IGNORED_KEYWORDS) do
-            if txt:find(badWord) then return false end
-        end
-        for _, name in ipairs(COMMANDMENT_NAMES) do
-            if txt:find(name) then return true end
-        end
-    end
-
-    return false
+    return true
 end
 
 local function collectCommandment(targetObj)
@@ -253,7 +264,6 @@ local function collectCommandment(targetObj)
     local rootPart = getRootPart()
     if not char or not rootPart then return false end
 
-    -- Помечаем объект как уже обрабатываемый/собранный, чтобы избежать дублей
     collectedObjects[targetObj] = true
 
     -- Находим координаты
@@ -287,7 +297,7 @@ local function collectCommandment(targetObj)
         else
             pcall(function()
                 VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-                task.wait(0.02)
+                task.wait(0.01)
                 VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
             end)
         end
@@ -298,10 +308,12 @@ local function collectCommandment(targetObj)
     if targetPart and typeof(firetouchinterest) == "function" then
         pcall(function()
             firetouchinterest(rootPart, targetPart, 0)
-            task.wait(0.02)
+            task.wait(0.01)
             firetouchinterest(rootPart, targetPart, 1)
         end)
     end
+
+    pcall(function() targetObj:Destroy() end)
 
     return true
 end
@@ -360,7 +372,7 @@ local CommandmentStatusParagraph = Tabs.Commandments:AddParagraph({ Title = "Sta
 
 -- Ball / Crow Loop
 task.spawn(function()
-    while task.wait(0.4) do
+    while task.wait(0.2) do
         if Options.AutoCollectBall and Options.AutoCollectBall.Value then
             local found = false
             for _, obj in ipairs(workspace:GetDescendants()) do
@@ -368,7 +380,9 @@ task.spawn(function()
                     found = true
                     BallStatusParagraph:SetDesc("Status: Collecting Ball (" .. obj.Name .. ")")
                     collectCommandment(obj)
-                    task.wait(0.3)
+                    if Options.AutoBallServerHop and Options.AutoBallServerHop.Value then
+                        genericServerHop(function(msg) BallStatusParagraph:SetDesc("Status: " .. msg) end)
+                    end
                     break
                 end
             end
@@ -387,7 +401,9 @@ task.spawn(function()
                     found = true
                     BallStatusParagraph:SetDesc("Status: Collecting Crow (" .. obj.Name .. ")")
                     collectCommandment(obj)
-                    task.wait(0.3)
+                    if Options.AutoCrowServerHop and Options.AutoCrowServerHop.Value then
+                        genericServerHop(function(msg) BallStatusParagraph:SetDesc("Status: " .. msg) end)
+                    end
                     break
                 end
             end
@@ -402,10 +418,8 @@ task.spawn(function()
 end)
 
 -- Commandments Loop
-local attemptsMap = {}
-
 task.spawn(function()
-    while task.wait(0.3) do
+    while task.wait(0.15) do
         if Options.AutoCollectCommandments and Options.AutoCollectCommandments.Value then
             local target = nil
             
@@ -417,21 +431,14 @@ task.spawn(function()
             end
 
             if target and target.Parent then
-                attemptsMap[target] = (attemptsMap[target] or 0) + 1
-
-                if attemptsMap[target] > 2 then
-                    blacklistedObjects[target] = true
-                    attemptsMap[target] = nil
-                else
-                    CommandmentStatusParagraph:SetDesc("Status: Collecting " .. target.Name)
-                    local success = collectCommandment(target)
-                    if success then
-                        task.wait(0.3) -- Пауза на удаление предмета с сервера
-                    end
+                CommandmentStatusParagraph:SetDesc("Status: Collected " .. target.Name .. ", Hopping...")
+                collectCommandment(target)
+                
+                if Options.AutoCommandmentServerHop and Options.AutoCommandmentServerHop.Value then
+                    genericServerHop(function(msg) CommandmentStatusParagraph:SetDesc("Status: " .. msg) end)
                 end
             else
-                attemptsMap = {}
-                CommandmentStatusParagraph:SetDesc("Status: No Commandments found on this server.")
+                CommandmentStatusParagraph:SetDesc("Status: No Commandments found. Hopping...")
                 if Options.AutoCommandmentServerHop and Options.AutoCommandmentServerHop.Value then
                     genericServerHop(function(msg) CommandmentStatusParagraph:SetDesc("Status: " .. msg) end)
                 end
@@ -455,5 +462,5 @@ InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
 Window:SelectTab(4)
-Fluent:Notify({ Title = "Anime Astral", Content = "Duplicate collect & phantom clicks fixed!", Duration = 4 })
+Fluent:Notify({ Title = "Anime Astral", Content = "Exact match & RaidPortal fix applied!", Duration = 4 })
 SaveManager:LoadAutoloadConfig()
