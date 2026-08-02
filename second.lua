@@ -181,7 +181,7 @@ local function genericServerHop(statusCallback)
 end
 
 -- ══════════════════════════════════════════════════════════════
--- EXACT WORD MATCH DETECTION (FIXED FOR CLOVER)
+-- COMMANDMENT DETECTION & COLLECTION (v1.1.0)
 -- ══════════════════════════════════════════════════════════════
 
 local EXACT_10_COMMANDMENTS = {
@@ -192,7 +192,8 @@ local EXACT_10_COMMANDMENTS = {
 local IGNORE_KEYWORDS = {
     "portal", "raid", "gate", "door", "zone", "teleport", 
     "shop", "npc", "spawn", "gui", "ui", "hud", "asta", 
-    "quest", "dialog", "humanoid", "player", "clover", "machine"
+    "quest", "dialog", "humanoid", "player", "clover", "machine",
+    "button", "board", "stat"
 }
 
 local collectedObjects = {}
@@ -205,7 +206,7 @@ local function isCommandmentModel(obj)
     if obj:IsA("UIComponent") or obj:IsA("GuiObject") or obj:IsA("LayerCollector") then return false end
     if obj:IsDescendantOf(workspace.CurrentCamera) or obj:IsDescendantOf(game:GetService("CoreGui")) then return false end
 
-    -- Фильтр Персонажей
+    -- Фильтр Персонажей и NPC
     if obj:FindFirstChildOfClass("Humanoid") then return false end
     for _, player in ipairs(Players:GetPlayers()) do
         if player.Character and obj:IsDescendantOf(player.Character) then
@@ -213,21 +214,21 @@ local function isCommandmentModel(obj)
         end
     end
 
-    local nameLower = obj.Name:lower()
     local fullNameLower = obj:GetFullName():lower()
 
-    -- Игнорируем объекты карты
+    -- Игнорируем объекты карты по чёрному списку
     for _, badWord in ipairs(IGNORE_KEYWORDS) do
         if fullNameLower:find(badWord) then
             return false
         end
     end
 
-    -- СТРОГАЯ Проверка слов (слово целиком, чтобы clover не совпадал с love)
+    -- Проверка на наличие имени заповеди
     local matchFound = false
+    local nameLower = obj.Name:lower()
+
     for _, cmdName in ipairs(EXACT_10_COMMANDMENTS) do
-        -- Прямое совпадение имени или изолированное слово в названии
-        if nameLower == cmdName or nameLower:match("%f[%a]" .. cmdName .. "%f[%A]") then
+        if nameLower:find(cmdName) then
             matchFound = true
             break
         end
@@ -244,8 +245,9 @@ local function collectCommandment(targetObj)
     local rootPart = getRootPart()
     if not char or not rootPart then return false end
 
+    -- Помечаем объект как обработанный, чтобы избегать бесконечных циклов
     collectedObjects[targetObj] = true
-    warn("[ANIME ASTRAL v1.0.9] Target matched: " .. targetObj:GetFullName())
+    warn("[ANIME ASTRAL v1.1.0] Collecting target: " .. targetObj:GetFullName())
 
     local targetCFrame
     if targetObj:IsA("Model") then
@@ -257,16 +259,16 @@ local function collectCommandment(targetObj)
 
     if not targetCFrame then return false end
 
-    -- ТП к предмету
-    for i = 1, 3 do
-        pcall(function()
-            char:PivotTo(targetCFrame)
-            rootPart.AssemblyLinearVelocity = Vector3.zero
-        end)
-        task.wait(0.05)
-    end
+    -- 1. ТП прямо к предмету
+    pcall(function()
+        char:PivotTo(targetCFrame)
+        rootPart.AssemblyLinearVelocity = Vector3.zero
+    end)
+    
+    -- Задержка 0.15с, чтобы сервер синхронизировал позицию игрока!
+    task.wait(0.15)
 
-    -- Нажатие ProximityPrompt
+    -- 2. Взаимодействие через ProximityPrompt (всеми способами)
     local prompt = targetObj:FindFirstChildWhichIsA("ProximityPrompt", true) 
         or (targetObj.Parent and targetObj.Parent:FindFirstChildWhichIsA("ProximityPrompt", true))
 
@@ -277,18 +279,29 @@ local function collectCommandment(targetObj)
             prompt.HoldDuration = 0
         end)
 
+        -- Метод 1: Native Fire
         if typeof(fireproximityprompt) == "function" then
             pcall(fireproximityprompt, prompt)
-        else
-            pcall(function()
-                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-                task.wait(0.05)
-                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-            end)
         end
+
+        -- Метод 2: Direct Hold Signals
+        pcall(function()
+            if prompt.InputHoldBegan then
+                prompt:InputHoldBegan()
+                task.wait(0.05)
+                prompt:InputHoldEnded()
+            end
+        end)
+
+        -- Метод 3: Key Simulation
+        pcall(function()
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+            task.wait(0.05)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+        end)
     end
 
-    -- TouchInterest
+    -- 3. Взаимодействие через TouchInterest
     local targetPart = targetObj:IsA("BasePart") and targetObj or targetObj:FindFirstChildWhichIsA("BasePart", true)
     if targetPart and typeof(firetouchinterest) == "function" then
         pcall(function()
@@ -298,8 +311,14 @@ local function collectCommandment(targetObj)
         end)
     end
 
+    -- Пауза для получения ответа от сервера
     task.wait(0.4)
-    pcall(function() targetObj:Destroy() end)
+
+    -- Удаляем объект локально, если он оказался фантомом
+    if targetObj and targetObj.Parent then
+        pcall(function() targetObj:Destroy() end)
+    end
+
     return true
 end
 
@@ -313,7 +332,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title = "Anime Astral",
-    SubTitle = "v1.0.9 - Whole Word Match Fix",
+    SubTitle = "v1.1.0 - Desync & Prompt Fix",
     TabWidth = 160,
     Size = UDim2.fromOffset(500, 320),
     Acrylic = false,
@@ -355,6 +374,9 @@ local CommandmentStatusParagraph = Tabs.Commandments:AddParagraph({ Title = "Sta
 -- MAIN LOOPS
 -- ══════════════════════════════════════════════════════════════
 
+-- Флаг первичной прогрузки сервера
+local serverLoadedTime = tick()
+
 -- Ball / Crow Loop
 task.spawn(function()
     while task.wait(0.2) do
@@ -371,7 +393,7 @@ task.spawn(function()
                     break
                 end
             end
-            if not found then
+            if not found and (tick() - serverLoadedTime > 1.5) then
                 BallStatusParagraph:SetDesc("Status: No Ball found on this server.")
                 if Options.AutoBallServerHop and Options.AutoBallServerHop.Value then
                     genericServerHop(function(msg) BallStatusParagraph:SetDesc("Status: " .. msg) end)
@@ -392,7 +414,7 @@ task.spawn(function()
                     break
                 end
             end
-            if not found then
+            if not found and (tick() - serverLoadedTime > 1.5) then
                 BallStatusParagraph:SetDesc("Status: No Crow found on this server.")
                 if Options.AutoCrowServerHop and Options.AutoCrowServerHop.Value then
                     genericServerHop(function(msg) BallStatusParagraph:SetDesc("Status: " .. msg) end)
@@ -404,7 +426,7 @@ end)
 
 -- Commandments Loop
 task.spawn(function()
-    while task.wait(0.2) do
+    while task.wait(0.25) do
         if Options.AutoCollectCommandments and Options.AutoCollectCommandments.Value then
             local target = nil
             
@@ -418,11 +440,16 @@ task.spawn(function()
             if target and target.Parent then
                 CommandmentStatusParagraph:SetDesc("Status: FOUND " .. target.Name .. "! Collecting...")
                 collectCommandment(target)
-                task.wait(0.5)
+                task.wait(0.3)
             else
-                CommandmentStatusParagraph:SetDesc("Status: No Commandments found. Hopping...")
-                if Options.AutoCommandmentServerHop and Options.AutoCommandmentServerHop.Value then
-                    genericServerHop(function(msg) CommandmentStatusParagraph:SetDesc("Status: " .. msg) end)
+                -- Ждем минимум 1.5 сек с момента входа на сервер, чтобы исключить несформированный workspace
+                if (tick() - serverLoadedTime > 1.5) then
+                    CommandmentStatusParagraph:SetDesc("Status: No Commandments found. Hopping...")
+                    if Options.AutoCommandmentServerHop and Options.AutoCommandmentServerHop.Value then
+                        genericServerHop(function(msg) CommandmentStatusParagraph:SetDesc("Status: " .. msg) end)
+                    end
+                else
+                    CommandmentStatusParagraph:SetDesc("Status: Waiting for workspace stream...")
                 end
             end
         end
@@ -444,5 +471,5 @@ InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
 Window:SelectTab(4)
-Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.0.9 - Whole Word Match Fix!", Duration = 4 })
+Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.1.0 - Desync Fix!", Duration = 4 })
 SaveManager:LoadAutoloadConfig()
