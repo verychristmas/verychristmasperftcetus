@@ -181,27 +181,18 @@ local function genericServerHop(statusCallback)
 end
 
 -- ══════════════════════════════════════════════════════════════
--- EXACT 10 COMMANDMENTS DETECTION
+-- EXACT WORD MATCH DETECTION (FIXED FOR CLOVER)
 -- ══════════════════════════════════════════════════════════════
 
 local EXACT_10_COMMANDMENTS = {
-    "faith",
-    "love",
-    "pacifism",
-    "patience",
-    "piety",
-    "purity",
-    "repose",
-    "retience",
-    "reticence",
-    "selflessness",
-    "truth"
+    "faith", "love", "pacifism", "patience", "piety",
+    "purity", "repose", "retience", "reticence", "selflessness", "truth"
 }
 
 local IGNORE_KEYWORDS = {
     "portal", "raid", "gate", "door", "zone", "teleport", 
     "shop", "npc", "spawn", "gui", "ui", "hud", "asta", 
-    "quest", "dialog", "humanoid", "player"
+    "quest", "dialog", "humanoid", "player", "clover", "machine"
 }
 
 local collectedObjects = {}
@@ -214,7 +205,7 @@ local function isCommandmentModel(obj)
     if obj:IsA("UIComponent") or obj:IsA("GuiObject") or obj:IsA("LayerCollector") then return false end
     if obj:IsDescendantOf(workspace.CurrentCamera) or obj:IsDescendantOf(game:GetService("CoreGui")) then return false end
 
-    -- Фильтр Игроков и NPC
+    -- Фильтр Персонажей
     if obj:FindFirstChildOfClass("Humanoid") then return false end
     for _, player in ipairs(Players:GetPlayers()) do
         if player.Character and obj:IsDescendantOf(player.Character) then
@@ -225,17 +216,18 @@ local function isCommandmentModel(obj)
     local nameLower = obj.Name:lower()
     local fullNameLower = obj:GetFullName():lower()
 
-    -- Игнор системных объектов карты
+    -- Игнорируем объекты карты
     for _, badWord in ipairs(IGNORE_KEYWORDS) do
         if fullNameLower:find(badWord) then
             return false
         end
     end
 
-    -- Проверка на 10 точных названий
+    -- СТРОГАЯ Проверка слов (слово целиком, чтобы clover не совпадал с love)
     local matchFound = false
     for _, cmdName in ipairs(EXACT_10_COMMANDMENTS) do
-        if nameLower:find(cmdName) or fullNameLower:find(cmdName) then
+        -- Прямое совпадение имени или изолированное слово в названии
+        if nameLower == cmdName or nameLower:match("%f[%a]" .. cmdName .. "%f[%A]") then
             matchFound = true
             break
         end
@@ -253,7 +245,7 @@ local function collectCommandment(targetObj)
     if not char or not rootPart then return false end
 
     collectedObjects[targetObj] = true
-    warn("[ANIME ASTRAL v1.0.8] Collecting target: " .. targetObj:GetFullName())
+    warn("[ANIME ASTRAL v1.0.9] Target matched: " .. targetObj:GetFullName())
 
     local targetCFrame
     if targetObj:IsA("Model") then
@@ -265,7 +257,7 @@ local function collectCommandment(targetObj)
 
     if not targetCFrame then return false end
 
-    -- ТП прямо в координаты
+    -- ТП к предмету
     for i = 1, 3 do
         pcall(function()
             char:PivotTo(targetCFrame)
@@ -296,7 +288,7 @@ local function collectCommandment(targetObj)
         end
     end
 
-    -- Трагивание TouchInterest (для касания)
+    -- TouchInterest
     local targetPart = targetObj:IsA("BasePart") and targetObj or targetObj:FindFirstChildWhichIsA("BasePart", true)
     if targetPart and typeof(firetouchinterest) == "function" then
         pcall(function()
@@ -321,7 +313,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title = "Anime Astral",
-    SubTitle = "v1.0.8 - Exact 10 List Fix",
+    SubTitle = "v1.0.9 - Whole Word Match Fix",
     TabWidth = 160,
     Size = UDim2.fromOffset(500, 320),
     Acrylic = false,
@@ -452,5 +444,5 @@ InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
 Window:SelectTab(4)
-Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.0.8 - Exact 10 List!", Duration = 4 })
+Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.0.9 - Whole Word Match Fix!", Duration = 4 })
 SaveManager:LoadAutoloadConfig()
