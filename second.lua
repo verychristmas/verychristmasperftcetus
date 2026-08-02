@@ -84,21 +84,43 @@ local function SendFeedback(kind, message)
 end
 
 -- ══════════════════════════════════════════════════════════════
--- SAFE SERVER HOP LOGIC
+-- SERVER HOP LOGIC
 -- ══════════════════════════════════════════════════════════════
 
+local HOP_HISTORY_FILE = "AnimeAstralHopHistory.json"
+local COOLDOWN_TIME = 1800
+local serverHistory = {}
 local isHopping = false
+
+pcall(function()
+    if isfile and isfile(HOP_HISTORY_FILE) then
+        local fileData = readfile(HOP_HISTORY_FILE)
+        if fileData and fileData ~= "" then
+            local decoded = HttpService:JSONDecode(fileData)
+            if type(decoded) == "table" then serverHistory = decoded end
+        end
+    end
+end)
+
+local function saveServerHistory()
+    if writefile then
+        pcall(function()
+            writefile(HOP_HISTORY_FILE, HttpService:JSONEncode(serverHistory))
+        end)
+    end
+end
 
 local function universalServerHop(statusCallback)
     if isHopping then return false end
     isHopping = true
 
-    if statusCallback then statusCallback("Finding server...") end
+    if statusCallback then statusCallback("Finding server via API...") end
     local placeId = game.PlaceId
     local currentJobId = game.JobId
     local req = httpRequest
 
     if not req then
+        if statusCallback then statusCallback("No HTTP support, fallback teleport...") end
         TeleportService:Teleport(placeId, LocalPlayer)
         isHopping = false
         return false
@@ -106,7 +128,7 @@ local function universalServerHop(statusCallback)
 
     local success, response = pcall(function()
         return req({
-            Url = string.format("https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=Asc&limit=50", tostring(placeId)),
+            Url = string.format("https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=Asc&limit=100", tostring(placeId)),
             Method = "GET",
             Headers = { ["Content-Type"] = "application/json" }
         })
@@ -119,12 +141,15 @@ local function universalServerHop(statusCallback)
         if data and data.data then
             for _, server in ipairs(data.data) do
                 if server.playing < server.maxPlayers and server.id ~= currentJobId then
-                    if statusCallback then statusCallback("Hopping to new server...") end
-                    local tpSuccess = pcall(function()
-                        TeleportService:TeleportToPlaceInstance(placeId, server.id, LocalPlayer)
-                    end)
-                    if tpSuccess then
-                        task.wait(10)
+                    if not serverHistory[server.id] or (os.time() - serverHistory[server.id] > COOLDOWN_TIME) then
+                        serverHistory[currentJobId] = os.time()
+                        saveServerHistory()
+
+                        if statusCallback then statusCallback("Teleporting to: " .. server.id) end
+                        pcall(function()
+                            TeleportService:TeleportToPlaceInstance(placeId, server.id, LocalPlayer)
+                        end)
+                        task.wait(6)
                         isHopping = false
                         return true
                     end
@@ -133,17 +158,18 @@ local function universalServerHop(statusCallback)
         end
     end
 
+    if statusCallback then statusCallback("API failed, fallback teleport...") end
     pcall(function()
         TeleportService:Teleport(placeId, LocalPlayer)
     end)
     
-    task.wait(10)
+    task.wait(6)
     isHopping = false
     return false
 end
 
 -- ══════════════════════════════════════════════════════════════
--- COMMANDMENT COLLECTION
+-- COMMANDMENT COLLECTION (With Camera & Angle Fix)
 -- ══════════════════════════════════════════════════════════════
 
 local EXACT_10_COMMANDMENTS = {
@@ -172,9 +198,6 @@ local function isCommandmentModel(obj)
 
     local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart", true)
     if not part then return false end
-    
-    local posSuccess, pos = pcall(function() return part.Position end)
-    if not posSuccess or not pos or pos.Magnitude < 1 then return false end
 
     return true
 end
@@ -189,14 +212,18 @@ local function interactWithObject(targetObj)
 
     local targetPos = targetPart.Position
 
+    -- 1. ТЕПАТЕЛЬСТВО И ПОВОРОТ КАМЕРЫ (Сверху вниз, как на твоем скриншоте)
     pcall(function()
         char:PivotTo(CFrame.new(targetPos + Vector3.new(0, 0.5, 0)))
         rootPart.AssemblyLinearVelocity = Vector3.zero
+        
+        -- Ставим камеру прямо над предметом, чтобы игра засчитала видимость промпта
         Camera.CFrame = CFrame.new(targetPos + Vector3.new(0, 8, 4), targetPos)
     end)
     
-    task.wait(0.15)
+    task.wait(0.2)
 
+    -- 2. Активация ProximityPrompt
     for _, prompt in ipairs(targetObj:GetDescendants()) do
         if prompt:IsA("ProximityPrompt") then
             pcall(function()
@@ -211,6 +238,28 @@ local function interactWithObject(targetObj)
         end
     end
 
+    -- 3. Вызов RemoteEvent на случай серверного сбора
+    pcall(function()
+        for _, descendant in ipairs(ReplicatedStorage:GetDescendants()) do
+            if descendant:IsA("RemoteEvent") then
+                local name = descendant.Name:lower()
+                if name:find("collect") or name:find("interact") or name:find("pick") or name:find("commandment") or name:find("item") then
+                    descendant:FireServer(targetObj)
+                end
+            end
+        end
+    end)
+
+    -- 4. Физический касательный интерес
+    if typeof(firetouchinterest) == "function" then
+        pcall(function()
+            firetouchinterest(rootPart, targetPart, 0)
+            task.wait(0.05)
+            firetouchinterest(rootPart, targetPart, 1)
+        end)
+    end
+
+    -- 5. Симуляция нажатия E
     pcall(function()
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
         task.wait(0.05)
@@ -222,15 +271,15 @@ end
 
 local function collectCommandment(targetObj)
     if not targetObj or not targetObj.Parent then return false end
-    collectedObjects[targetObj] = true
 
-    for attempt = 1, 2 do
-        if not targetObj or not targetObj.Parent then break end
+    for attempt = 1, 3 do
+        if not targetObj or not targetObj.Parent then return true end
         interactWithObject(targetObj)
-        task.wait(0.2)
+        task.wait(0.3)
     end
 
-    return true
+    collectedObjects[targetObj] = true
+    return false
 end
 
 -- ══════════════════════════════════════════════════════════════
@@ -243,7 +292,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title = "Anime Astral",
-    SubTitle = "v1.4.2 - Clean Monolith",
+    SubTitle = "v1.3.6 - Camera Fix",
     TabWidth = 160,
     Size = UDim2.fromOffset(500, 320),
     Acrylic = false,
@@ -273,30 +322,27 @@ Tabs.Commandments:AddToggle("AutoCommandmentServerHop", { Title = "Auto Server H
 local CommandmentStatusParagraph = Tabs.Commandments:AddParagraph({ Title = "Status", Content = "Waiting for activation..." })
 
 -- ══════════════════════════════════════════════════════════════
--- MAIN LOOP
+-- MAIN LOOPS
 -- ══════════════════════════════════════════════════════════════
 
 task.spawn(function()
-    while true do
-        task.wait(1)
-        if Options.AutoCollectCommandments and Options.AutoCollectCommandments.Value and not isHopping then
+    while task.wait(0.3) do
+        if Options.AutoCollectCommandments and Options.AutoCollectCommandments.Value then
             local target = nil
             
-            pcall(function()
-                for _, obj in ipairs(workspace:GetDescendants()) do
-                    if isCommandmentModel(obj) then
-                        target = obj
-                        break
-                    end
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if isCommandmentModel(obj) then
+                    target = obj
+                    break
                 end
-            end)
+            end
 
             if target and target.Parent then
-                CommandmentStatusParagraph:SetDesc("Status: Picking up...")
+                CommandmentStatusParagraph:SetDesc("Status: Picking up " .. target.Name .. "...")
                 collectCommandment(target)
-                task.wait(0.5)
+                task.wait(0.3)
             else
-                CommandmentStatusParagraph:SetDesc("Status: No items. Hopping...")
+                CommandmentStatusParagraph:SetDesc("Status: No items found. Hopping...")
                 if Options.AutoCommandmentServerHop and Options.AutoCommandmentServerHop.Value then
                     universalServerHop(function(msg) CommandmentStatusParagraph:SetDesc("Status: " .. msg) end)
                 end
@@ -320,5 +366,5 @@ InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
 Window:SelectTab(4)
-Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.4.2!", Duration = 4 })
+Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.3.6 with Camera Fix!", Duration = 4 })
 SaveManager:LoadAutoloadConfig()
