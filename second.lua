@@ -31,6 +31,9 @@ local function getRootPart()
     return char and char:FindFirstChild("HumanoidRootPart")
 end
 
+-- Флаг: был ли это переход между серверами
+local isServerHopped = false
+
 -- ══════════════════════════════════════════════════════════════
 -- FEEDBACK SYSTEM
 -- ══════════════════════════════════════════════════════════════
@@ -181,7 +184,7 @@ local function genericServerHop(statusCallback)
 end
 
 -- ══════════════════════════════════════════════════════════════
--- COMMANDMENT DETECTION & COLLECTION LOGIC (v1.3.3)
+-- COMMANDMENT DETECTION & COLLECTION LOGIC (v1.3.4)
 -- ══════════════════════════════════════════════════════════════
 
 local EXACT_10_COMMANDMENTS = {
@@ -196,10 +199,6 @@ local function isCommandmentModel(obj)
     if collectedObjects[obj] then return false end
     if not obj:IsDescendantOf(workspace) then return false end
 
-    -- Проверяем, находится ли объект в специальной папке или воркспейсе
-    local isTargetFolder = obj:IsDescendantOf(workspace:FindFirstChild("World12Commandments") or workspace)
-    if not isTargetFolder then return false end
-
     local nameLower = obj.Name:lower()
     local matchFound = false
 
@@ -212,37 +211,36 @@ local function isCommandmentModel(obj)
 
     if not matchFound then return false end
 
-    -- Ищем ProximityPrompt внутри
+    -- Проверка на наличие реального ProximityPrompt
     local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
-    return prompt ~= nil
+    if not prompt or not prompt.Enabled then return false end
+
+    -- Проверка на наличие хотя бы одного видимого Part
+    local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart", true)
+    if not part then return false end
+
+    return true
 end
 
-local function collectCommandment(targetObj)
-    if not targetObj or not targetObj.Parent or collectedObjects[targetObj] then return false end
+local function interactWithObject(targetObj)
     local char = getCharacter()
     local rootPart = getRootPart()
-    if not char or not rootPart then return false end
+    if not char or not rootPart or not targetObj or not targetObj.Parent then return false end
 
-    local targetPos
-    if targetObj:IsA("Model") then
-        local part = targetObj.PrimaryPart or targetObj:FindFirstChildWhichIsA("BasePart", true)
-        targetPos = part and part.Position or targetObj:GetPivot().Position
-    elseif targetObj:IsA("BasePart") then
-        targetPos = targetObj.Position
-    end
+    local targetPart = targetObj:IsA("BasePart") and targetObj or targetObj:FindFirstChildWhichIsA("BasePart", true)
+    local targetPos = targetPart and targetPart.Position or targetObj:GetPivot().Position
 
     if not targetPos then return false end
 
-    -- ТП прямо к предмету (чуть выше и с поворотом)
-    local standCFrame = CFrame.lookAt(targetPos + Vector3.new(0, 1, 2), targetPos)
+    -- ТП вплотную с поворотом взгляда
+    local standCFrame = CFrame.lookAt(targetPos + Vector3.new(0, 0.5, 1.5), targetPos)
 
     pcall(function()
         char:PivotTo(standCFrame)
         rootPart.AssemblyLinearVelocity = Vector3.zero
     end)
     
-    -- Даём 0.3 сек серверу зарегистрировать персонажа рядом
-    task.wait(0.3)
+    task.wait(0.15)
 
     local prompt = targetObj:FindFirstChildWhichIsA("ProximityPrompt", true) 
         or (targetObj.Parent and targetObj.Parent:FindFirstChildWhichIsA("ProximityPrompt", true))
@@ -255,9 +253,7 @@ local function collectCommandment(targetObj)
             prompt.Enabled = true
         end)
 
-        task.wait(0.05)
-
-        -- Вызов ProximityPrompt
+        -- Симулируем все способы нажатия E
         if typeof(fireproximityprompt) == "function" then
             pcall(fireproximityprompt, prompt)
         end
@@ -277,8 +273,7 @@ local function collectCommandment(targetObj)
         end)
     end
 
-    -- Дополнительно: касание хитбокса
-    local targetPart = targetObj:IsA("BasePart") and targetObj or targetObj:FindFirstChildWhichIsA("BasePart", true)
+    -- TouchInterest (на всякий случай)
     if targetPart and typeof(firetouchinterest) == "function" then
         pcall(function()
             firetouchinterest(rootPart, targetPart, 0)
@@ -287,15 +282,22 @@ local function collectCommandment(targetObj)
         end)
     end
 
-    -- Ждем ответа от сервера
-    task.wait(0.8)
+    return true
+end
 
-    -- Если объект всё ещё существует после попытки, заносим в собранные на этом сервере, чтоб не спамить
-    if targetObj and targetObj.Parent then
-        collectedObjects[targetObj] = true
+local function collectCommandment(targetObj)
+    if not targetObj or not targetObj.Parent then return false end
+
+    -- Пробуем забрать 3 раза подряд перед сдачей
+    for attempt = 1, 3 do
+        if not targetObj or not targetObj.Parent then return true end -- Предмет пропал = забран!
+        interactWithObject(targetObj)
+        task.wait(0.3)
     end
 
-    return true
+    -- Если за 3 попытки не поднялся — записываем в собранные (фантом), чтоб не зависать
+    collectedObjects[targetObj] = true
+    return false
 end
 
 -- ══════════════════════════════════════════════════════════════
@@ -308,7 +310,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title = "Anime Astral",
-    SubTitle = "v1.3.3 - World12 Fix & Prompt Fix",
+    SubTitle = "v1.3.4 - Instant Start & Retry Fix",
     TabWidth = 160,
     Size = UDim2.fromOffset(500, 320),
     Acrylic = false,
@@ -331,15 +333,6 @@ local BugSection = Tabs.Feedback:AddSection("Bug report")
 local BugInput = BugSection:AddInput("BugInput", { Title = "Submit", Placeholder = "Describe the bug..." })
 BugSection:AddButton({ Title = "Send bug report", Callback = function() SendFeedback("bug", BugInput.Value) end })
 
--- Ball / Crow Tab
-Tabs.BallCrow:AddSection("Auto Collect Special Items")
-Tabs.BallCrow:AddToggle("AutoCollectBall", { Title = "Auto Collect Ball", Default = false })
-Tabs.BallCrow:AddToggle("AutoBallServerHop", { Title = "Auto Server Hop (Ball)", Default = false })
-local BallStatusParagraph = Tabs.BallCrow:AddParagraph({ Title = "Status", Content = "Waiting for activation..." })
-
-Tabs.BallCrow:AddToggle("AutoCollectCrow", { Title = "Auto Collect Crow", Default = false })
-Tabs.BallCrow:AddToggle("AutoCrowServerHop", { Title = "Auto Server Hop (Crow)", Default = false })
-
 -- Commandments Tab
 Tabs.Commandments:AddSection("Auto Collect Commandments")
 Tabs.Commandments:AddToggle("AutoCollectCommandments", { Title = "Auto Collect Commandments", Default = false })
@@ -350,25 +343,13 @@ local CommandmentStatusParagraph = Tabs.Commandments:AddParagraph({ Title = "Sta
 -- MAIN LOOPS
 -- ══════════════════════════════════════════════════════════════
 
-local serverLoadedTime = tick()
-
--- Commandments Loop
 task.spawn(function()
-    while task.wait(0.3) do
+    while task.wait(0.2) do
         if Options.AutoCollectCommandments and Options.AutoCollectCommandments.Value then
-            -- Ждём минимум 4 секунды после реконнекта для загрузки сетевой части
-            if (tick() - serverLoadedTime) < 4 then
-                CommandmentStatusParagraph:SetDesc("Status: Waiting for server sync (BridgeNet2)...")
-                continue
-            end
-
             local target = nil
             
-            -- Проверяем сначала специальную папку World12Commandments
-            local folder = workspace:FindFirstChild("World12Commandments")
-            local searchArea = folder and folder:GetDescendants() or workspace:GetDescendants()
-
-            for _, obj in ipairs(searchArea) do
+            -- Ищем валидную заповедь по всему workspace
+            for _, obj in ipairs(workspace:GetDescendants()) do
                 if isCommandmentModel(obj) then
                     target = obj
                     break
@@ -376,11 +357,11 @@ task.spawn(function()
             end
 
             if target and target.Parent then
-                CommandmentStatusParagraph:SetDesc("Status: Collecting " .. target.Name)
+                CommandmentStatusParagraph:SetDesc("Status: Picking up " .. target.Name .. "...")
                 collectCommandment(target)
-                task.wait(0.3)
+                task.wait(0.2)
             else
-                CommandmentStatusParagraph:SetDesc("Status: No Commandments found. Hopping...")
+                CommandmentStatusParagraph:SetDesc("Status: No items found. Hopping...")
                 if Options.AutoCommandmentServerHop and Options.AutoCommandmentServerHop.Value then
                     genericServerHop(function(msg) CommandmentStatusParagraph:SetDesc("Status: " .. msg) end)
                 end
@@ -404,5 +385,5 @@ InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
 Window:SelectTab(4)
-Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.3.3!", Duration = 4 })
+Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.3.4!", Duration = 4 })
 SaveManager:LoadAutoloadConfig()
