@@ -181,7 +181,7 @@ local function genericServerHop(statusCallback)
 end
 
 -- ══════════════════════════════════════════════════════════════
--- COMMANDMENT DETECTION & COLLECTION (v1.2.0 STRICT 3D FILTER)
+-- COMMANDMENT DETECTION & COLLECTION (v1.2.1 BALANCED)
 -- ══════════════════════════════════════════════════════════════
 
 local EXACT_10_COMMANDMENTS = {
@@ -193,7 +193,7 @@ local IGNORE_KEYWORDS = {
     "portal", "raid", "gate", "door", "zone", "teleport", 
     "shop", "npc", "spawn", "gui", "ui", "hud", "asta", 
     "quest", "dialog", "humanoid", "player", "clover", "machine",
-    "button", "board", "stat", "template", "icon", "image", "label"
+    "button", "board", "stat"
 }
 
 local collectedObjects = {}
@@ -202,15 +202,13 @@ local function isCommandmentModel(obj)
     if not obj or not obj.Parent then return false end
     if collectedObjects[obj] then return false end
 
-    -- 1. СТРОГАЯ ПРОВЕРКА НА 3D-МИР (Исключаем UI, CoreGui, ReplicatedStorage и т.д.)
+    -- ТОЛЬКО В WORKSPACE
     if not obj:IsDescendantOf(workspace) then return false end
 
-    -- Игнорируем UI компоненты
-    if obj:IsA("UIComponent") or obj:IsA("GuiObject") or obj:IsA("LayerCollector") or obj:IsA("BillboardGui") or obj:IsA("SurfaceGui") then 
-        return false 
-    end
+    -- Игнорируем UI
+    if obj:IsA("UIComponent") or obj:IsA("GuiObject") or obj:IsA("LayerCollector") then return false end
 
-    -- Игнорируем персонажей игроков и NPC
+    -- Игнорируем игроков/NPC
     if obj:FindFirstChildOfClass("Humanoid") then return false end
     for _, player in ipairs(Players:GetPlayers()) do
         if player.Character and obj:IsDescendantOf(player.Character) then
@@ -218,25 +216,7 @@ local function isCommandmentModel(obj)
         end
     end
 
-    -- 2. ПРОВЕРКА НА ФИЗИЧЕСКУЮ ЧАСТЬ (Исключаем фантомные префабы)
-    local targetPart = nil
-    if obj:IsA("BasePart") then
-        targetPart = obj
-    elseif obj:IsA("Model") or obj:IsA("Tool") then
-        targetPart = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart", true)
-    end
-
-    if not targetPart then return false end
-
-    -- Проверка на прозрачность (если невидимый предмет/префаб)
-    if targetPart.Transparency >= 0.99 then return false end
-
-    -- Проверка на нулевые координаты (0,0,0) — часто там хранят фантомы
-    if targetPart.Position.Magnitude < 5 then return false end
-
-    -- 3. ПРОВЕРКА ИМЕНИ ПО ЧЕРНОМУ И БЕЛОМУ СПИСКУ
     local fullNameLower = obj:GetFullName():lower()
-
     for _, badWord in ipairs(IGNORE_KEYWORDS) do
         if fullNameLower:find(badWord) then
             return false
@@ -253,7 +233,9 @@ local function isCommandmentModel(obj)
         end
     end
 
-    return matchFound
+    if not matchFound then return false end
+
+    return obj:IsA("Model") or obj:IsA("BasePart") or obj:IsA("Tool")
 end
 
 local function collectCommandment(targetObj)
@@ -263,7 +245,7 @@ local function collectCommandment(targetObj)
     if not char or not rootPart then return false end
 
     collectedObjects[targetObj] = true
-    warn("[ANIME ASTRAL v1.2.0] Valid 3D Item Found: " .. targetObj:GetFullName())
+    warn("[ANIME ASTRAL v1.2.1] Target Found: " .. targetObj:GetFullName())
 
     local targetCFrame
     if targetObj:IsA("Model") then
@@ -277,7 +259,7 @@ local function collectCommandment(targetObj)
 
     -- ТП к предмету
     pcall(function()
-        char:PivotTo(targetCFrame * CFrame.new(0, 1.5, 0))
+        char:PivotTo(targetCFrame)
         rootPart.AssemblyLinearVelocity = Vector3.zero
     end)
     
@@ -342,7 +324,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title = "Anime Astral",
-    SubTitle = "v1.2.0 - Strict 3D Filter",
+    SubTitle = "v1.2.1 - Hop & Detect Fix",
     TabWidth = 160,
     Size = UDim2.fromOffset(500, 320),
     Acrylic = false,
@@ -402,7 +384,7 @@ task.spawn(function()
                     break
                 end
             end
-            if not found and (tick() - serverLoadedTime > 2) then
+            if not found and (tick() - serverLoadedTime > 3) then
                 BallStatusParagraph:SetDesc("Status: No Ball found on this server.")
                 if Options.AutoBallServerHop and Options.AutoBallServerHop.Value then
                     genericServerHop(function(msg) BallStatusParagraph:SetDesc("Status: " .. msg) end)
@@ -423,7 +405,7 @@ task.spawn(function()
                     break
                 end
             end
-            if not found and (tick() - serverLoadedTime > 2) then
+            if not found and (tick() - serverLoadedTime > 3) then
                 BallStatusParagraph:SetDesc("Status: No Crow found on this server.")
                 if Options.AutoCrowServerHop and Options.AutoCrowServerHop.Value then
                     genericServerHop(function(msg) BallStatusParagraph:SetDesc("Status: " .. msg) end)
@@ -451,8 +433,8 @@ task.spawn(function()
                 collectCommandment(target)
                 task.wait(0.3)
             else
-                -- Даем 2 секунды на прогрузку карты перед серверхлопом
-                if (tick() - serverLoadedTime > 2) then
+                -- Даём 3 секунды на прогрузку карты перед ливом
+                if (tick() - serverLoadedTime > 3) then
                     CommandmentStatusParagraph:SetDesc("Status: No Commandments found. Hopping...")
                     if Options.AutoCommandmentServerHop and Options.AutoCommandmentServerHop.Value then
                         genericServerHop(function(msg) CommandmentStatusParagraph:SetDesc("Status: " .. msg) end)
@@ -480,5 +462,5 @@ InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
 Window:SelectTab(4)
-Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.2.0 - Fixed Fake Teleports!", Duration = 4 })
+Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.2.1!", Duration = 4 })
 SaveManager:LoadAutoloadConfig()
