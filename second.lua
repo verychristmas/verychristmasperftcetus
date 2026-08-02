@@ -82,17 +82,17 @@ local function SendFeedback(kind, message)
 end
 
 -- ══════════════════════════════════════════════════════════════
--- FIXED SERVER HOP LOGIC (GUI Safe & Universal API)
+-- FIXED ROBUST SERVER HOP LOGIC
 -- ══════════════════════════════════════════════════════════════
 
-local SERVER_HOP_HISTORY_FILE = "AnimeAstralHopHistory.json"
-local SERVER_COOLDOWN_TIME = 1800
+local HOP_HISTORY_FILE = "AnimeAstralHopHistory.json"
+local COOLDOWN_TIME = 1800
 local serverHistory = {}
 local isHopping = false
 
 pcall(function()
-    if isfile and isfile(SERVER_HOP_HISTORY_FILE) then
-        local fileData = readfile(SERVER_HOP_HISTORY_FILE)
+    if isfile and isfile(HOP_HISTORY_FILE) then
+        local fileData = readfile(HOP_HISTORY_FILE)
         if fileData and fileData ~= "" then
             local decoded = HttpService:JSONDecode(fileData)
             if type(decoded) == "table" then serverHistory = decoded end
@@ -103,107 +103,72 @@ end)
 local function saveServerHistory()
     if writefile then
         pcall(function()
-            writefile(SERVER_HOP_HISTORY_FILE, HttpService:JSONEncode(serverHistory))
+            writefile(HOP_HISTORY_FILE, HttpService:JSONEncode(serverHistory))
         end)
     end
-end
-
-local function cleanServerHistory()
-    local currentTime = os.time()
-    for jobId, visitTime in pairs(serverHistory) do
-        if type(visitTime) == "number" and (currentTime - visitTime > SERVER_COOLDOWN_TIME) then
-            serverHistory[jobId] = nil
-        end
-    end
-    saveServerHistory()
 end
 
 local function universalServerHop(statusCallback)
     if isHopping then return false end
     isHopping = true
 
+    if statusCallback then statusCallback("Finding server via API...") end
     local placeId = game.PlaceId
     local currentJobId = game.JobId
-    cleanServerHistory()
-
-    local cursor = ""
-    local foundServer = false
-    
     local req = httpRequest
 
     if not req then
-        if statusCallback then statusCallback("Executor lacks HTTP request support!") end
+        if statusCallback then statusCallback("No HTTP support, fallback teleport...") end
+        TeleportService:Teleport(placeId, LocalPlayer)
         isHopping = false
         return false
     end
 
-    while not foundServer do
-        local url = string.format("https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=Asc&limit=100%s", tostring(placeId), cursor ~= "" and "&cursor=" .. cursor or "")
-        local success, response = pcall(function() return req({ Url = url, Method = "GET" }) end)
+    local success, response = pcall(function()
+        return req({
+            Url = string.format("https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=Asc&limit=100", tostring(placeId)),
+            Method = "GET",
+            Headers = { ["Content-Type"] = "application/json" }
+        })
+    end)
 
-        if success and response and response.Body then
-            local data
-            pcall(function() data = HttpService:JSONDecode(response.Body) end)
+    if success and response and response.Body then
+        local data
+        pcall(function() data = HttpService:JSONDecode(response.Body) end)
 
-            if data and data.data then
-                local validServers = {}
-                for _, server in ipairs(data.data) do
-                    if server.playing < server.maxPlayers and server.id ~= currentJobId then
-                        local isOnCooldown = false
-                        if serverHistory[server.id] and (os.time() - serverHistory[server.id]) < SERVER_COOLDOWN_TIME then
-                            isOnCooldown = true
-                        end
-                        if not isOnCooldown then
-                            table.insert(validServers, server)
-                        end
+        if data and data.data then
+            for _, server in ipairs(data.data) do
+                if server.playing < server.maxPlayers and server.id ~= currentJobId then
+                    if not serverHistory[server.id] or (os.time() - serverHistory[server.id] > COOLDOWN_TIME) then
+                        serverHistory[currentJobId] = os.time()
+                        saveServerHistory()
+
+                        if statusCallback then statusCallback("Teleporting to: " .. server.id) end
+                        pcall(function()
+                            TeleportService:TeleportToPlaceInstance(placeId, server.id, LocalPlayer)
+                        end)
+                        task.wait(6)
+                        isHopping = false
+                        return true
                     end
                 end
-
-                if #validServers > 0 then
-                    local randomServer = validServers[math.random(1, #validServers)]
-                    if statusCallback then statusCallback("Teleporting to server: " .. tostring(randomServer.id)) end
-                    
-                    serverHistory[currentJobId] = os.time()
-                    saveServerHistory()
-
-                    pcall(function()
-                        TeleportService:TeleportToPlaceInstance(placeId, randomServer.id, LocalPlayer)
-                    end)
-                    
-                    foundServer = true
-                    task.wait(5)
-                    isHopping = false
-                    return true
-                end
-
-                if not foundServer and data.nextPageCursor then
-                    cursor = data.nextPageCursor
-                elseif not foundServer and not data.nextPageCursor then
-                    if statusCallback then statusCallback("Resetting server history & retrying...") end
-                    serverHistory = {}
-                    saveServerHistory()
-                    cursor = ""
-                end
             end
-        else
-            break
         end
-        task.wait(0.5)
     end
-    
-    -- Если через API не нашли, делаем обычный резервный телепорт
-    if statusCallback then statusCallback("Fallback Teleport...") end
+
+    -- Если через API сервер не нашелся, используем обычный резервный метод
+    if statusCallback then statusCallback("API failed, fallback teleport...") end
     pcall(function()
         TeleportService:Teleport(placeId, LocalPlayer)
     end)
     
-    task.wait(5)
+    task.wait(6)
     isHopping = false
     return false
 end
 
 -- ══════════════════════════════════════════════════════════════
--- COMMANDMENT DETECTION & COLLECTION LOGIC (v1.3.6)
+-- COMMANDMENT DETECTION & COLLECTION LOGIC (v1.3.6 Fixed)
 -- ══════════════════════════════════════════════════════════════
 
 local EXACT_10_COMMANDMENTS = {
@@ -230,9 +195,6 @@ local function isCommandmentModel(obj)
 
     if not matchFound then return false end
 
-    local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
-    if not prompt or not prompt.Enabled then return false end
-
     local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart", true)
     if not part then return false end
 
@@ -245,50 +207,35 @@ local function interactWithObject(targetObj)
     if not char or not rootPart or not targetObj or not targetObj.Parent then return false end
 
     local targetPart = targetObj:IsA("BasePart") and targetObj or targetObj:FindFirstChildWhichIsA("BasePart", true)
-    local targetPos = targetPart and targetPart.Position or targetObj:GetPivot().Position
+    if not targetPart then return false end
 
-    if not targetPos then return false end
+    local targetPos = targetPart.Position
 
-    local standCFrame = CFrame.lookAt(targetPos + Vector3.new(0, 0.5, 1.5), targetPos)
-
+    -- Телепортируемся вплотную к предмету
     pcall(function()
-        char:PivotTo(standCFrame)
+        char:PivotTo(CFrame.new(targetPos + Vector3.new(0, 0.5, 0)))
         rootPart.AssemblyLinearVelocity = Vector3.zero
     end)
     
-    task.wait(0.15)
+    task.wait(0.1)
 
-    local prompt = targetObj:FindFirstChildWhichIsA("ProximityPrompt", true) 
-        or (targetObj.Parent and targetObj.Parent:FindFirstChildWhichIsA("ProximityPrompt", true))
-
-    if prompt then
-        pcall(function()
-            prompt.RequiresLineOfSight = false
-            prompt.MaxActivationDistance = 9999
-            prompt.HoldDuration = 0
-            prompt.Enabled = true
-        end)
-
-        if typeof(fireproximityprompt) == "function" then
-            pcall(fireproximityprompt, prompt)
-        end
-
-        pcall(function()
-            if prompt.InputHoldBegan then
-                prompt:InputHoldBegan()
-                task.wait(0.05)
-                prompt:InputHoldEnded()
+    -- Ищем и активируем абсолютно все промпты внутри объекта
+    for _, prompt in ipairs(targetObj:GetDescendants()) do
+        if prompt:IsA("ProximityPrompt") then
+            pcall(function()
+                prompt.RequiresLineOfSight = false
+                prompt.MaxActivationDistance = 9999
+                prompt.HoldDuration = 0
+                prompt.Enabled = true
+            end)
+            if typeof(fireproximityprompt) == "function" then
+                pcall(fireproximityprompt, prompt)
             end
-        end)
-
-        pcall(function()
-            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-            task.wait(0.05)
-            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-        end)
+        end
     end
 
-    if targetPart and typeof(firetouchinterest) == "function" then
+    -- Дублируем касанием через touch interest
+    if typeof(firetouchinterest) == "function" then
         pcall(function()
             firetouchinterest(rootPart, targetPart, 0)
             task.wait(0.05)
@@ -305,7 +252,7 @@ local function collectCommandment(targetObj)
     for attempt = 1, 3 do
         if not targetObj or not targetObj.Parent then return true end
         interactWithObject(targetObj)
-        task.wait(0.3)
+        task.wait(0.2)
     end
 
     collectedObjects[targetObj] = true
@@ -356,7 +303,7 @@ local CommandmentStatusParagraph = Tabs.Commandments:AddParagraph({ Title = "Sta
 -- ══════════════════════════════════════════════════════════════
 
 task.spawn(function()
-    while task.wait(0.2) do
+    while task.wait(0.3) do
         if Options.AutoCollectCommandments and Options.AutoCollectCommandments.Value then
             local target = nil
             
@@ -370,7 +317,7 @@ task.spawn(function()
             if target and target.Parent then
                 CommandmentStatusParagraph:SetDesc("Status: Picking up " .. target.Name .. "...")
                 collectCommandment(target)
-                task.wait(0.2)
+                task.wait(0.3)
             else
                 CommandmentStatusParagraph:SetDesc("Status: No items found. Hopping...")
                 if Options.AutoCommandmentServerHop and Options.AutoCommandmentServerHop.Value then
