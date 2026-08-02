@@ -133,7 +133,6 @@ local function universalServerHop(statusCallback)
         end
     end
 
-    -- Запасной телепорт при сбое API
     pcall(function()
         TeleportService:Teleport(placeId, LocalPlayer)
     end)
@@ -244,7 +243,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title = "Anime Astral",
-    SubTitle = "v1.4.1 - Crash Fix",
+    SubTitle = "v1.4.2 - Clean Monolith",
     TabWidth = 160,
     Size = UDim2.fromOffset(500, 320),
     Acrylic = false,
@@ -274,7 +273,7 @@ Tabs.Commandments:AddToggle("AutoCommandmentServerHop", { Title = "Auto Server H
 local CommandmentStatusParagraph = Tabs.Commandments:AddParagraph({ Title = "Status", Content = "Waiting for activation..." })
 
 -- ══════════════════════════════════════════════════════════════
--- MAIN LOOP (Защищенный от утечек памяти)
+-- MAIN LOOP
 -- ══════════════════════════════════════════════════════════════
 
 task.spawn(function()
@@ -321,5 +320,5 @@ InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
 Window:SelectTab(4)
-Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.4.1 (Crash Fix)!", Duration = 4 })
+Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.4.2!", Duration = 4 })
 SaveManager:LoadAutoloadConfig()
