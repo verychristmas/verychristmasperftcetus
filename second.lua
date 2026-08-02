@@ -181,7 +181,7 @@ local function genericServerHop(statusCallback)
 end
 
 -- ══════════════════════════════════════════════════════════════
--- COMMANDMENT DETECTION & ORIGINAL TELEPORT LOGIC
+-- COMMANDMENT DETECTION & COLLECTION LOGIC (v1.3.2 OFFSETS)
 -- ══════════════════════════════════════════════════════════════
 
 local EXACT_10_COMMANDMENTS = {
@@ -201,14 +201,10 @@ local collectedObjects = {}
 local function isCommandmentModel(obj)
     if not obj or not obj.Parent then return false end
     if collectedObjects[obj] then return false end
-
-    -- Поиск строго в Workspace
     if not obj:IsDescendantOf(workspace) then return false end
 
-    -- Игнорируем UI элементы
     if obj:IsA("UIComponent") or obj:IsA("GuiObject") or obj:IsA("LayerCollector") then return false end
 
-    -- Игнорируем игроков/NPC
     if obj:FindFirstChildOfClass("Humanoid") then return false end
     for _, player in ipairs(Players:GetPlayers()) do
         if player.Character and obj:IsDescendantOf(player.Character) then
@@ -245,25 +241,27 @@ local function collectCommandment(targetObj)
 
     collectedObjects[targetObj] = true
 
-    local targetCFrame
+    local targetPos
     if targetObj:IsA("Model") then
         local part = targetObj.PrimaryPart or targetObj:FindFirstChildWhichIsA("BasePart", true)
-        targetCFrame = part and part.CFrame or targetObj:GetPivot()
+        targetPos = part and part.Position or targetObj:GetPivot().Position
     elseif targetObj:IsA("BasePart") then
-        targetCFrame = targetObj.CFrame
+        targetPos = targetObj.Position
     end
 
-    if not targetCFrame then return false end
+    if not targetPos then return false end
 
-    -- ВОЗВРАТ СТАРОГО МГНОВЕННОГО ТЕЛЕПОРТА (Как было до лагов с кловером)
+    -- ТП на расстоянии 3.5 блоков перед предметом и разворот к нему лица (чтобы RAYCAST игры регистрировал взгляд)
+    local standCFrame = CFrame.lookAt(targetPos + Vector3.new(0, 1.5, 3.5), targetPos)
+
     pcall(function()
-        char:PivotTo(targetCFrame * CFrame.new(0, 1.5, 0))
+        char:PivotTo(standCFrame)
         rootPart.AssemblyLinearVelocity = Vector3.zero
     end)
     
-    task.wait(0.1)
+    task.wait(0.2)
 
-    -- Нажатие ProximityPrompt
+    -- Поиск ProximityPrompt
     local prompt = targetObj:FindFirstChildWhichIsA("ProximityPrompt", true) 
         or (targetObj.Parent and targetObj.Parent:FindFirstChildWhichIsA("ProximityPrompt", true))
 
@@ -272,7 +270,10 @@ local function collectCommandment(targetObj)
             prompt.RequiresLineOfSight = false
             prompt.MaxActivationDistance = 9999
             prompt.HoldDuration = 0
+            prompt.Enabled = true
         end)
+
+        task.wait(0.05)
 
         if typeof(fireproximityprompt) == "function" then
             pcall(fireproximityprompt, prompt)
@@ -281,7 +282,7 @@ local function collectCommandment(targetObj)
         pcall(function()
             if prompt.InputHoldBegan then
                 prompt:InputHoldBegan()
-                task.wait(0.05)
+                task.wait(0.1)
                 prompt:InputHoldEnded()
             end
         end)
@@ -293,7 +294,7 @@ local function collectCommandment(targetObj)
         end)
     end
 
-    -- TouchInterest (на всякий случай)
+    -- TouchInterest
     local targetPart = targetObj:IsA("BasePart") and targetObj or targetObj:FindFirstChildWhichIsA("BasePart", true)
     if targetPart and typeof(firetouchinterest) == "function" then
         pcall(function()
@@ -303,9 +304,7 @@ local function collectCommandment(targetObj)
         end)
     end
 
-    -- Пауза чтобы дать серверу забрать предмет (без принудительного Destroy!)
     task.wait(0.5)
-
     return true
 end
 
@@ -319,7 +318,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title = "Anime Astral",
-    SubTitle = "v1.3.1 - Restored Original TP",
+    SubTitle = "v1.3.2 - LookAt & Standoff Fix",
     TabWidth = 160,
     Size = UDim2.fromOffset(500, 320),
     Acrylic = false,
@@ -424,7 +423,7 @@ task.spawn(function()
             end
 
             if target and target.Parent then
-                CommandmentStatusParagraph:SetDesc("Status: FOUND " .. target.Name .. "! Teleporting...")
+                CommandmentStatusParagraph:SetDesc("Status: FOUND " .. target.Name .. "! Interacting...")
                 collectCommandment(target)
                 task.wait(0.2)
             else
@@ -456,5 +455,5 @@ InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
 Window:SelectTab(4)
-Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.3.1 - Restored Working TP!", Duration = 4 })
+Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.3.2!", Duration = 4 })
 SaveManager:LoadAutoloadConfig()
