@@ -20,6 +20,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local TeleportService = game:GetService("TeleportService")
+local Workspace = game:GetService("Workspace")
+local Camera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 
 local function getCharacter()
@@ -82,7 +84,7 @@ local function SendFeedback(kind, message)
 end
 
 -- ══════════════════════════════════════════════════════════════
--- FIXED ROBUST SERVER HOP LOGIC
+-- SERVER HOP LOGIC
 -- ══════════════════════════════════════════════════════════════
 
 local HOP_HISTORY_FILE = "AnimeAstralHopHistory.json"
@@ -156,7 +158,6 @@ local function universalServerHop(statusCallback)
         end
     end
 
-    -- Если через API сервер не нашелся, используем обычный резервный метод
     if statusCallback then statusCallback("API failed, fallback teleport...") end
     pcall(function()
         TeleportService:Teleport(placeId, LocalPlayer)
@@ -168,7 +169,7 @@ local function universalServerHop(statusCallback)
 end
 
 -- ══════════════════════════════════════════════════════════════
--- COMMANDMENT DETECTION & COLLECTION LOGIC (v1.3.6 Fixed)
+-- COMMANDMENT COLLECTION (With Camera & Angle Fix)
 -- ══════════════════════════════════════════════════════════════
 
 local EXACT_10_COMMANDMENTS = {
@@ -211,15 +212,18 @@ local function interactWithObject(targetObj)
 
     local targetPos = targetPart.Position
 
-    -- Телепортируемся вплотную к предмету
+    -- 1. ТЕПАТЕЛЬСТВО И ПОВОРОТ КАМЕРЫ (Сверху вниз, как на твоем скриншоте)
     pcall(function()
         char:PivotTo(CFrame.new(targetPos + Vector3.new(0, 0.5, 0)))
         rootPart.AssemblyLinearVelocity = Vector3.zero
+        
+        -- Ставим камеру прямо над предметом, чтобы игра засчитала видимость промпта
+        Camera.CFrame = CFrame.new(targetPos + Vector3.new(0, 8, 4), targetPos)
     end)
     
-    task.wait(0.1)
+    task.wait(0.2)
 
-    -- Ищем и активируем абсолютно все промпты внутри объекта
+    -- 2. Активация ProximityPrompt
     for _, prompt in ipairs(targetObj:GetDescendants()) do
         if prompt:IsA("ProximityPrompt") then
             pcall(function()
@@ -234,7 +238,19 @@ local function interactWithObject(targetObj)
         end
     end
 
-    -- Дублируем касанием через touch interest
+    -- 3. Вызов RemoteEvent на случай серверного сбора
+    pcall(function()
+        for _, descendant in ipairs(ReplicatedStorage:GetDescendants()) do
+            if descendant:IsA("RemoteEvent") then
+                local name = descendant.Name:lower()
+                if name:find("collect") or name:find("interact") or name:find("pick") or name:find("commandment") or name:find("item") then
+                    descendant:FireServer(targetObj)
+                end
+            end
+        end
+    end)
+
+    -- 4. Физический касательный интерес
     if typeof(firetouchinterest) == "function" then
         pcall(function()
             firetouchinterest(rootPart, targetPart, 0)
@@ -242,6 +258,13 @@ local function interactWithObject(targetObj)
             firetouchinterest(rootPart, targetPart, 1)
         end)
     end
+
+    -- 5. Симуляция нажатия E
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+        task.wait(0.05)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+    end)
 
     return true
 end
@@ -252,7 +275,7 @@ local function collectCommandment(targetObj)
     for attempt = 1, 3 do
         if not targetObj or not targetObj.Parent then return true end
         interactWithObject(targetObj)
-        task.wait(0.2)
+        task.wait(0.3)
     end
 
     collectedObjects[targetObj] = true
@@ -269,7 +292,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title = "Anime Astral",
-    SubTitle = "v1.3.6 - Teleport GUI Fix",
+    SubTitle = "v1.3.6 - Camera Fix",
     TabWidth = 160,
     Size = UDim2.fromOffset(500, 320),
     Acrylic = false,
@@ -343,5 +366,5 @@ InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
 Window:SelectTab(4)
-Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.3.6!", Duration = 4 })
+Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.3.6 with Camera Fix!", Duration = 4 })
 SaveManager:LoadAutoloadConfig()
