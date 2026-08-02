@@ -31,9 +31,6 @@ local function getRootPart()
     return char and char:FindFirstChild("HumanoidRootPart")
 end
 
--- Флаг: был ли это переход между серверами
-local isServerHopped = false
-
 -- ══════════════════════════════════════════════════════════════
 -- FEEDBACK SYSTEM
 -- ══════════════════════════════════════════════════════════════
@@ -85,7 +82,7 @@ local function SendFeedback(kind, message)
 end
 
 -- ══════════════════════════════════════════════════════════════
--- SERVER HOP LOGIC
+-- FIXED SERVER HOP LOGIC (GUI Safe)
 -- ══════════════════════════════════════════════════════════════
 
 local HOP_HISTORY_FILE = "AnimeAstralHopHistory.json"
@@ -114,11 +111,8 @@ local function genericServerHop(statusCallback)
     isHopping = true
 
     task.spawn(function()
-        if statusCallback then statusCallback("Searching for new server...") end
+        if statusCallback then statusCallback("Reconnecting (Safe Hop)...") end
         local placeId = game.PlaceId
-        local currentJobId = game.JobId
-        local cursor = ""
-        local foundServer = false
         local req = httpRequest
 
         if not req then 
@@ -126,65 +120,44 @@ local function genericServerHop(statusCallback)
             return 
         end
 
-        local attempts = 0
-        while not foundServer and attempts < 6 do
-            attempts = attempts + 1
-            local url = string.format("https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=Asc&limit=100%s", tostring(placeId), cursor ~= "" and "&cursor=" .. cursor or "")
-            local success, response = pcall(function() return req({ Url = url, Method = "GET" }) end)
+        task.wait(0.5)
 
-            if success and response and response.Body then
-                local data
-                pcall(function() data = HttpService:JSONDecode(response.Body) end)
+        -- Используем стандартный чистый Teleport, чтобы не ломать клиентский GUI и BridgeNet2
+        local success, err = pcall(function()
+            TeleportService:Teleport(placeId, LocalPlayer)
+        end)
 
-                if data and data.data then
-                    local validServers = {}
-                    for _, server in ipairs(data.data) do
-                        if server.playing < server.maxPlayers and server.id ~= currentJobId then
-                            if not (serverHistory[server.id] and (os.time() - serverHistory[server.id]) < COOLDOWN_TIME) then
-                                table.insert(validServers, server)
+        if not success then
+            -- Запасной поиск через публичные инстансы
+            local cursor = ""
+            local found = false
+            for i = 1, 3 do
+                local url = string.format("https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=Asc&limit=100%s", tostring(placeId), cursor ~= "" and "&cursor=" .. cursor or "")
+                local s, res = pcall(function() return req({ Url = url, Method = "GET" }) end)
+                if s and res and res.Body then
+                    local data = HttpService:JSONDecode(res.Body)
+                    if data and data.data then
+                        for _, srv in ipairs(data.data) do
+                            if srv.playing < srv.maxPlayers and srv.id ~= game.JobId then
+                                TeleportService:TeleportToPlaceInstance(placeId, srv.id, LocalPlayer)
+                                found = true
+                                break
                             end
                         end
                     end
-
-                    if #validServers > 0 then
-                        local randomServer = validServers[math.random(1, #validServers)]
-                        if statusCallback then statusCallback("Teleporting...") end
-                        serverHistory[currentJobId] = os.time()
-                        saveHistory()
-                        pcall(function()
-                            TeleportService:TeleportToPlaceInstance(placeId, randomServer.id, LocalPlayer)
-                        end)
-                        foundServer = true
-                        break
-                    end
-
-                    if not foundServer and data.nextPageCursor then
-                        cursor = data.nextPageCursor
-                    else
-                        serverHistory = {}
-                        saveHistory()
-                        break
-                    end
                 end
-            else
-                break
+                if found then break end
+                task.wait(1)
             end
-            task.wait(0.3)
         end
 
-        if not foundServer then
-            serverHistory = {}
-            saveHistory()
-            pcall(function() TeleportService:Teleport(placeId, LocalPlayer) end)
-        end
-
-        task.wait(2)
+        task.wait(5)
         isHopping = false
     end)
 end
 
 -- ══════════════════════════════════════════════════════════════
--- COMMANDMENT DETECTION & COLLECTION LOGIC (v1.3.4)
+-- COMMANDMENT DETECTION & COLLECTION LOGIC (v1.3.6)
 -- ══════════════════════════════════════════════════════════════
 
 local EXACT_10_COMMANDMENTS = {
@@ -211,11 +184,9 @@ local function isCommandmentModel(obj)
 
     if not matchFound then return false end
 
-    -- Проверка на наличие реального ProximityPrompt
     local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
     if not prompt or not prompt.Enabled then return false end
 
-    -- Проверка на наличие хотя бы одного видимого Part
     local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart", true)
     if not part then return false end
 
@@ -232,7 +203,6 @@ local function interactWithObject(targetObj)
 
     if not targetPos then return false end
 
-    -- ТП вплотную с поворотом взгляда
     local standCFrame = CFrame.lookAt(targetPos + Vector3.new(0, 0.5, 1.5), targetPos)
 
     pcall(function()
@@ -253,7 +223,6 @@ local function interactWithObject(targetObj)
             prompt.Enabled = true
         end)
 
-        -- Симулируем все способы нажатия E
         if typeof(fireproximityprompt) == "function" then
             pcall(fireproximityprompt, prompt)
         end
@@ -273,7 +242,6 @@ local function interactWithObject(targetObj)
         end)
     end
 
-    -- TouchInterest (на всякий случай)
     if targetPart and typeof(firetouchinterest) == "function" then
         pcall(function()
             firetouchinterest(rootPart, targetPart, 0)
@@ -288,14 +256,12 @@ end
 local function collectCommandment(targetObj)
     if not targetObj or not targetObj.Parent then return false end
 
-    -- Пробуем забрать 3 раза подряд перед сдачей
     for attempt = 1, 3 do
-        if not targetObj or not targetObj.Parent then return true end -- Предмет пропал = забран!
+        if not targetObj or not targetObj.Parent then return true end
         interactWithObject(targetObj)
         task.wait(0.3)
     end
 
-    -- Если за 3 попытки не поднялся — записываем в собранные (фантом), чтоб не зависать
     collectedObjects[targetObj] = true
     return false
 end
@@ -310,7 +276,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title = "Anime Astral",
-    SubTitle = "v1.3.4 - Instant Start & Retry Fix",
+    SubTitle = "v1.3.6 - Teleport GUI Fix",
     TabWidth = 160,
     Size = UDim2.fromOffset(500, 320),
     Acrylic = false,
@@ -348,7 +314,6 @@ task.spawn(function()
         if Options.AutoCollectCommandments and Options.AutoCollectCommandments.Value then
             local target = nil
             
-            -- Ищем валидную заповедь по всему workspace
             for _, obj in ipairs(workspace:GetDescendants()) do
                 if isCommandmentModel(obj) then
                     target = obj
@@ -385,5 +350,5 @@ InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
 Window:SelectTab(4)
-Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.3.4!", Duration = 4 })
+Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.3.6!", Duration = 4 })
 SaveManager:LoadAutoloadConfig()
