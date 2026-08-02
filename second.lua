@@ -84,43 +84,21 @@ local function SendFeedback(kind, message)
 end
 
 -- ══════════════════════════════════════════════════════════════
--- SERVER HOP LOGIC
+-- SAFE SERVER HOP LOGIC
 -- ══════════════════════════════════════════════════════════════
 
-local HOP_HISTORY_FILE = "AnimeAstralHopHistory.json"
-local COOLDOWN_TIME = 1800
-local serverHistory = {}
 local isHopping = false
-
-pcall(function()
-    if isfile and isfile(HOP_HISTORY_FILE) then
-        local fileData = readfile(HOP_HISTORY_FILE)
-        if fileData and fileData ~= "" then
-            local decoded = HttpService:JSONDecode(fileData)
-            if type(decoded) == "table" then serverHistory = decoded end
-        end
-    end
-end)
-
-local function saveServerHistory()
-    if writefile then
-        pcall(function()
-            writefile(HOP_HISTORY_FILE, HttpService:JSONEncode(serverHistory))
-        end)
-    end
-end
 
 local function universalServerHop(statusCallback)
     if isHopping then return false end
     isHopping = true
 
-    if statusCallback then statusCallback("Finding server via API...") end
+    if statusCallback then statusCallback("Finding server...") end
     local placeId = game.PlaceId
     local currentJobId = game.JobId
     local req = httpRequest
 
     if not req then
-        if statusCallback then statusCallback("No HTTP support, fallback teleport...") end
         TeleportService:Teleport(placeId, LocalPlayer)
         isHopping = false
         return false
@@ -128,7 +106,7 @@ local function universalServerHop(statusCallback)
 
     local success, response = pcall(function()
         return req({
-            Url = string.format("https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=Asc&limit=100", tostring(placeId)),
+            Url = string.format("https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=Asc&limit=50", tostring(placeId)),
             Method = "GET",
             Headers = { ["Content-Type"] = "application/json" }
         })
@@ -141,15 +119,12 @@ local function universalServerHop(statusCallback)
         if data and data.data then
             for _, server in ipairs(data.data) do
                 if server.playing < server.maxPlayers and server.id ~= currentJobId then
-                    if not serverHistory[server.id] or (os.time() - serverHistory[server.id] > COOLDOWN_TIME) then
-                        serverHistory[currentJobId] = os.time()
-                        saveServerHistory()
-
-                        if statusCallback then statusCallback("Teleporting to: " .. server.id) end
-                        pcall(function()
-                            TeleportService:TeleportToPlaceInstance(placeId, server.id, LocalPlayer)
-                        end)
-                        task.wait(6)
+                    if statusCallback then statusCallback("Hopping to new server...") end
+                    local tpSuccess = pcall(function()
+                        TeleportService:TeleportToPlaceInstance(placeId, server.id, LocalPlayer)
+                    end)
+                    if tpSuccess then
+                        task.wait(10)
                         isHopping = false
                         return true
                     end
@@ -158,18 +133,18 @@ local function universalServerHop(statusCallback)
         end
     end
 
-    if statusCallback then statusCallback("API failed, fallback teleport...") end
+    -- Запасной телепорт при сбое API
     pcall(function()
         TeleportService:Teleport(placeId, LocalPlayer)
     end)
     
-    task.wait(6)
+    task.wait(10)
     isHopping = false
     return false
 end
 
 -- ══════════════════════════════════════════════════════════════
--- COMMANDMENT COLLECTION (Stable Optimizer)
+-- COMMANDMENT COLLECTION
 -- ══════════════════════════════════════════════════════════════
 
 local EXACT_10_COMMANDMENTS = {
@@ -223,7 +198,6 @@ local function interactWithObject(targetObj)
     
     task.wait(0.15)
 
-    -- Безопасный вызов промптов без перегрузки бэкенда экзекутора
     for _, prompt in ipairs(targetObj:GetDescendants()) do
         if prompt:IsA("ProximityPrompt") then
             pcall(function()
@@ -238,7 +212,6 @@ local function interactWithObject(targetObj)
         end
     end
 
-    -- Точечный вызов эмуляции клавиши E
     pcall(function()
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
         task.wait(0.05)
@@ -250,7 +223,6 @@ end
 
 local function collectCommandment(targetObj)
     if not targetObj or not targetObj.Parent then return false end
-
     collectedObjects[targetObj] = true
 
     for attempt = 1, 2 do
@@ -272,7 +244,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title = "Anime Astral",
-    SubTitle = "v1.4.0 - Stable",
+    SubTitle = "v1.4.1 - Crash Fix",
     TabWidth = 160,
     Size = UDim2.fromOffset(500, 320),
     Acrylic = false,
@@ -302,27 +274,30 @@ Tabs.Commandments:AddToggle("AutoCommandmentServerHop", { Title = "Auto Server H
 local CommandmentStatusParagraph = Tabs.Commandments:AddParagraph({ Title = "Status", Content = "Waiting for activation..." })
 
 -- ══════════════════════════════════════════════════════════════
--- MAIN LOOPS (Оптимизированный интервал во избежание сбоев)
+-- MAIN LOOP (Защищенный от утечек памяти)
 -- ══════════════════════════════════════════════════════════════
 
 task.spawn(function()
-    while task.wait(0.5) do
-        if Options.AutoCollectCommandments and Options.AutoCollectCommandments.Value then
+    while true do
+        task.wait(1)
+        if Options.AutoCollectCommandments and Options.AutoCollectCommandments.Value and not isHopping then
             local target = nil
             
-            for _, obj in ipairs(workspace:GetDescendants()) do
-                if isCommandmentModel(obj) then
-                    target = obj
-                    break
+            pcall(function()
+                for _, obj in ipairs(workspace:GetDescendants()) do
+                    if isCommandmentModel(obj) then
+                        target = obj
+                        break
+                    end
                 end
-            end
+            end)
 
             if target and target.Parent then
-                CommandmentStatusParagraph:SetDesc("Status: Picking up " .. target.Name .. "...")
+                CommandmentStatusParagraph:SetDesc("Status: Picking up...")
                 collectCommandment(target)
-                task.wait(0.4)
+                task.wait(0.5)
             else
-                CommandmentStatusParagraph:SetDesc("Status: No items found. Hopping...")
+                CommandmentStatusParagraph:SetDesc("Status: No items. Hopping...")
                 if Options.AutoCommandmentServerHop and Options.AutoCommandmentServerHop.Value then
                     universalServerHop(function(msg) CommandmentStatusParagraph:SetDesc("Status: " .. msg) end)
                 end
@@ -346,5 +321,5 @@ InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
 Window:SelectTab(4)
-Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.4.0 (Stable)!", Duration = 4 })
+Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.4.1 (Crash Fix)!", Duration = 4 })
 SaveManager:LoadAutoloadConfig()
