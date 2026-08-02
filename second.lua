@@ -82,17 +82,17 @@ local function SendFeedback(kind, message)
 end
 
 -- ══════════════════════════════════════════════════════════════
--- FIXED SERVER HOP LOGIC (GUI Safe)
+-- FIXED SERVER HOP LOGIC (GUI Safe & Universal API)
 -- ══════════════════════════════════════════════════════════════
 
-local HOP_HISTORY_FILE = "AnimeAstralHopHistory.json"
-local COOLDOWN_TIME = 1800
+local SERVER_HOP_HISTORY_FILE = "AnimeAstralHopHistory.json"
+local SERVER_COOLDOWN_TIME = 1800
 local serverHistory = {}
 local isHopping = false
 
 pcall(function()
-    if isfile and isfile(HOP_HISTORY_FILE) then
-        local fileData = readfile(HOP_HISTORY_FILE)
+    if isfile and isfile(SERVER_HOP_HISTORY_FILE) then
+        local fileData = readfile(SERVER_HOP_HISTORY_FILE)
         if fileData and fileData ~= "" then
             local decoded = HttpService:JSONDecode(fileData)
             if type(decoded) == "table" then serverHistory = decoded end
@@ -100,60 +100,106 @@ pcall(function()
     end
 end)
 
-local function saveHistory()
+local function saveServerHistory()
     if writefile then
-        pcall(function() writefile(HOP_HISTORY_FILE, HttpService:JSONEncode(serverHistory)) end)
+        pcall(function()
+            writefile(SERVER_HOP_HISTORY_FILE, HttpService:JSONEncode(serverHistory))
+        end)
     end
 end
 
-local function genericServerHop(statusCallback)
-    if isHopping then return end
+local function cleanServerHistory()
+    local currentTime = os.time()
+    for jobId, visitTime in pairs(serverHistory) do
+        if type(visitTime) == "number" and (currentTime - visitTime > SERVER_COOLDOWN_TIME) then
+            serverHistory[jobId] = nil
+        end
+    end
+    saveServerHistory()
+end
+
+local function universalServerHop(statusCallback)
+    if isHopping then return false end
     isHopping = true
 
-    task.spawn(function()
-        if statusCallback then statusCallback("Reconnecting (Safe Hop)...") end
-        local placeId = game.PlaceId
-        local req = httpRequest
+    local placeId = game.PlaceId
+    local currentJobId = game.JobId
+    cleanServerHistory()
 
-        if not req then 
-            isHopping = false 
-            return 
-        end
+    local cursor = ""
+    local foundServer = false
+    
+    local req = httpRequest
 
-        task.wait(0.5)
+    if not req then
+        if statusCallback then statusCallback("Executor lacks HTTP request support!") end
+        isHopping = false
+        return false
+    end
 
-        -- Используем стандартный чистый Teleport, чтобы не ломать клиентский GUI и BridgeNet2
-        local success, err = pcall(function()
-            TeleportService:Teleport(placeId, LocalPlayer)
-        end)
+    while not foundServer do
+        local url = string.format("https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=Asc&limit=100%s", tostring(placeId), cursor ~= "" and "&cursor=" .. cursor or "")
+        local success, response = pcall(function() return req({ Url = url, Method = "GET" }) end)
 
-        if not success then
-            -- Запасной поиск через публичные инстансы
-            local cursor = ""
-            local found = false
-            for i = 1, 3 do
-                local url = string.format("https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=Asc&limit=100%s", tostring(placeId), cursor ~= "" and "&cursor=" .. cursor or "")
-                local s, res = pcall(function() return req({ Url = url, Method = "GET" }) end)
-                if s and res and res.Body then
-                    local data = HttpService:JSONDecode(res.Body)
-                    if data and data.data then
-                        for _, srv in ipairs(data.data) do
-                            if srv.playing < srv.maxPlayers and srv.id ~= game.JobId then
-                                TeleportService:TeleportToPlaceInstance(placeId, srv.id, LocalPlayer)
-                                found = true
-                                break
-                            end
+        if success and response and response.Body then
+            local data
+            pcall(function() data = HttpService:JSONDecode(response.Body) end)
+
+            if data and data.data then
+                local validServers = {}
+                for _, server in ipairs(data.data) do
+                    if server.playing < server.maxPlayers and server.id ~= currentJobId then
+                        local isOnCooldown = false
+                        if serverHistory[server.id] and (os.time() - serverHistory[server.id]) < SERVER_COOLDOWN_TIME then
+                            isOnCooldown = true
+                        end
+                        if not isOnCooldown then
+                            table.insert(validServers, server)
                         end
                     end
                 end
-                if found then break end
-                task.wait(1)
-            end
-        end
 
-        task.wait(5)
-        isHopping = false
+                if #validServers > 0 then
+                    local randomServer = validServers[math.random(1, #validServers)]
+                    if statusCallback then statusCallback("Teleporting to server: " .. tostring(randomServer.id)) end
+                    
+                    serverHistory[currentJobId] = os.time()
+                    saveServerHistory()
+
+                    pcall(function()
+                        TeleportService:TeleportToPlaceInstance(placeId, randomServer.id, LocalPlayer)
+                    end)
+                    
+                    foundServer = true
+                    task.wait(5)
+                    isHopping = false
+                    return true
+                end
+
+                if not foundServer and data.nextPageCursor then
+                    cursor = data.nextPageCursor
+                elseif not foundServer and not data.nextPageCursor then
+                    if statusCallback then statusCallback("Resetting server history & retrying...") end
+                    serverHistory = {}
+                    saveServerHistory()
+                    cursor = ""
+                end
+            end
+        else
+            break
+        end
+        task.wait(0.5)
+    end
+    
+    -- Если через API не нашли, делаем обычный резервный телепорт
+    if statusCallback then statusCallback("Fallback Teleport...") end
+    pcall(function()
+        TeleportService:Teleport(placeId, LocalPlayer)
     end)
+    
+    task.wait(5)
+    isHopping = false
+    return false
 end
 
 -- ══════════════════════════════════════════════════════════════
@@ -328,7 +374,7 @@ task.spawn(function()
             else
                 CommandmentStatusParagraph:SetDesc("Status: No items found. Hopping...")
                 if Options.AutoCommandmentServerHop and Options.AutoCommandmentServerHop.Value then
-                    genericServerHop(function(msg) CommandmentStatusParagraph:SetDesc("Status: " .. msg) end)
+                    universalServerHop(function(msg) CommandmentStatusParagraph:SetDesc("Status: " .. msg) end)
                 end
             end
         end
