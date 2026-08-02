@@ -169,7 +169,7 @@ local function universalServerHop(statusCallback)
 end
 
 -- ══════════════════════════════════════════════════════════════
--- COMMANDMENT COLLECTION (Balanced Filter)
+-- COMMANDMENT COLLECTION (Stable Optimizer)
 -- ══════════════════════════════════════════════════════════════
 
 local EXACT_10_COMMANDMENTS = {
@@ -196,7 +196,6 @@ local function isCommandmentModel(obj)
 
     if not matchFound then return false end
 
-    -- Проверяем наличие любой базовой части с валидными координатами
     local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart", true)
     if not part then return false end
     
@@ -224,6 +223,7 @@ local function interactWithObject(targetObj)
     
     task.wait(0.15)
 
+    -- Безопасный вызов промптов без перегрузки бэкенда экзекутора
     for _, prompt in ipairs(targetObj:GetDescendants()) do
         if prompt:IsA("ProximityPrompt") then
             pcall(function()
@@ -238,25 +238,7 @@ local function interactWithObject(targetObj)
         end
     end
 
-    pcall(function()
-        for _, descendant in ipairs(ReplicatedStorage:GetDescendants()) do
-            if descendant:IsA("RemoteEvent") then
-                local name = descendant.Name:lower()
-                if name:find("collect") or name:find("interact") or name:find("pick") or name:find("commandment") or name:find("item") then
-                    descendant:FireServer(targetObj)
-                end
-            end
-        end
-    end)
-
-    if typeof(firetouchinterest) == "function" then
-        pcall(function()
-            firetouchinterest(rootPart, targetPart, 0)
-            task.wait(0.05)
-            firetouchinterest(rootPart, targetPart, 1)
-        end)
-    end
-
+    -- Точечный вызов эмуляции клавиши E
     pcall(function()
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
         task.wait(0.05)
@@ -271,10 +253,10 @@ local function collectCommandment(targetObj)
 
     collectedObjects[targetObj] = true
 
-    for attempt = 1, 3 do
+    for attempt = 1, 2 do
         if not targetObj or not targetObj.Parent then break end
         interactWithObject(targetObj)
-        task.wait(0.25)
+        task.wait(0.2)
     end
 
     return true
@@ -290,7 +272,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title = "Anime Astral",
-    SubTitle = "v1.3.9 - Balanced Filter",
+    SubTitle = "v1.4.0 - Stable",
     TabWidth = 160,
     Size = UDim2.fromOffset(500, 320),
     Acrylic = false,
@@ -320,11 +302,11 @@ Tabs.Commandments:AddToggle("AutoCommandmentServerHop", { Title = "Auto Server H
 local CommandmentStatusParagraph = Tabs.Commandments:AddParagraph({ Title = "Status", Content = "Waiting for activation..." })
 
 -- ══════════════════════════════════════════════════════════════
--- MAIN LOOPS
+-- MAIN LOOPS (Оптимизированный интервал во избежание сбоев)
 -- ══════════════════════════════════════════════════════════════
 
 task.spawn(function()
-    while task.wait(0.3) do
+    while task.wait(0.5) do
         if Options.AutoCollectCommandments and Options.AutoCollectCommandments.Value then
             local target = nil
             
@@ -338,7 +320,7 @@ task.spawn(function()
             if target and target.Parent then
                 CommandmentStatusParagraph:SetDesc("Status: Picking up " .. target.Name .. "...")
                 collectCommandment(target)
-                task.wait(0.3)
+                task.wait(0.4)
             else
                 CommandmentStatusParagraph:SetDesc("Status: No items found. Hopping...")
                 if Options.AutoCommandmentServerHop and Options.AutoCommandmentServerHop.Value then
@@ -364,5 +346,5 @@ InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
 Window:SelectTab(4)
-Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.3.9!", Duration = 4 })
+Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.4.0 (Stable)!", Duration = 4 })
 SaveManager:LoadAutoloadConfig()
