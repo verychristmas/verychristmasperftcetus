@@ -181,7 +181,7 @@ local function genericServerHop(statusCallback)
 end
 
 -- ══════════════════════════════════════════════════════════════
--- COMMANDMENT DETECTION & COLLECTION (v1.2.1 BALANCED)
+-- COMMANDMENT DETECTION & ORIGINAL TELEPORT LOGIC
 -- ══════════════════════════════════════════════════════════════
 
 local EXACT_10_COMMANDMENTS = {
@@ -202,10 +202,10 @@ local function isCommandmentModel(obj)
     if not obj or not obj.Parent then return false end
     if collectedObjects[obj] then return false end
 
-    -- ТОЛЬКО В WORKSPACE
+    -- Поиск строго в Workspace
     if not obj:IsDescendantOf(workspace) then return false end
 
-    -- Игнорируем UI
+    -- Игнорируем UI элементы
     if obj:IsA("UIComponent") or obj:IsA("GuiObject") or obj:IsA("LayerCollector") then return false end
 
     -- Игнорируем игроков/NPC
@@ -234,7 +234,6 @@ local function isCommandmentModel(obj)
     end
 
     if not matchFound then return false end
-
     return obj:IsA("Model") or obj:IsA("BasePart") or obj:IsA("Tool")
 end
 
@@ -245,7 +244,6 @@ local function collectCommandment(targetObj)
     if not char or not rootPart then return false end
 
     collectedObjects[targetObj] = true
-    warn("[ANIME ASTRAL v1.2.1] Target Found: " .. targetObj:GetFullName())
 
     local targetCFrame
     if targetObj:IsA("Model") then
@@ -257,13 +255,13 @@ local function collectCommandment(targetObj)
 
     if not targetCFrame then return false end
 
-    -- ТП к предмету
+    -- ВОЗВРАТ СТАРОГО МГНОВЕННОГО ТЕЛЕПОРТА (Как было до лагов с кловером)
     pcall(function()
-        char:PivotTo(targetCFrame)
+        char:PivotTo(targetCFrame * CFrame.new(0, 1.5, 0))
         rootPart.AssemblyLinearVelocity = Vector3.zero
     end)
     
-    task.wait(0.15)
+    task.wait(0.1)
 
     -- Нажатие ProximityPrompt
     local prompt = targetObj:FindFirstChildWhichIsA("ProximityPrompt", true) 
@@ -295,7 +293,7 @@ local function collectCommandment(targetObj)
         end)
     end
 
-    -- TouchInterest
+    -- TouchInterest (на всякий случай)
     local targetPart = targetObj:IsA("BasePart") and targetObj or targetObj:FindFirstChildWhichIsA("BasePart", true)
     if targetPart and typeof(firetouchinterest) == "function" then
         pcall(function()
@@ -305,11 +303,8 @@ local function collectCommandment(targetObj)
         end)
     end
 
-    task.wait(0.4)
-
-    if targetObj and targetObj.Parent then
-        pcall(function() targetObj:Destroy() end)
-    end
+    -- Пауза чтобы дать серверу забрать предмет (без принудительного Destroy!)
+    task.wait(0.5)
 
     return true
 end
@@ -324,7 +319,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title = "Anime Astral",
-    SubTitle = "v1.2.1 - Hop & Detect Fix",
+    SubTitle = "v1.3.1 - Restored Original TP",
     TabWidth = 160,
     Size = UDim2.fromOffset(500, 320),
     Acrylic = false,
@@ -429,11 +424,10 @@ task.spawn(function()
             end
 
             if target and target.Parent then
-                CommandmentStatusParagraph:SetDesc("Status: FOUND " .. target.Name .. "! Collecting...")
+                CommandmentStatusParagraph:SetDesc("Status: FOUND " .. target.Name .. "! Teleporting...")
                 collectCommandment(target)
-                task.wait(0.3)
+                task.wait(0.2)
             else
-                -- Даём 3 секунды на прогрузку карты перед ливом
                 if (tick() - serverLoadedTime > 3) then
                     CommandmentStatusParagraph:SetDesc("Status: No Commandments found. Hopping...")
                     if Options.AutoCommandmentServerHop and Options.AutoCommandmentServerHop.Value then
@@ -462,5 +456,5 @@ InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
 Window:SelectTab(4)
-Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.2.1!", Duration = 4 })
+Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.3.1 - Restored Working TP!", Duration = 4 })
 SaveManager:LoadAutoloadConfig()
