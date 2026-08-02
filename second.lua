@@ -181,21 +181,27 @@ local function genericServerHop(statusCallback)
 end
 
 -- ══════════════════════════════════════════════════════════════
--- COMMANDMENT DETECTION (REFINED FULL MATCH)
+-- EXACT 10 COMMANDMENTS DETECTION
 -- ══════════════════════════════════════════════════════════════
 
-local TARGET_NAMES = {
-    "faith", "love", "pacifism", "patience", "piety", 
-    "purity", "repose", "retience", "reticence", 
-    "selflessness", "truth"
+local EXACT_10_COMMANDMENTS = {
+    "faith",
+    "love",
+    "pacifism",
+    "patience",
+    "piety",
+    "purity",
+    "repose",
+    "retience",
+    "reticence",
+    "selflessness",
+    "truth"
 }
 
-local BLACKLISTED_MAP_WORDS = {
+local IGNORE_KEYWORDS = {
     "portal", "raid", "gate", "door", "zone", "teleport", 
-    "shop", "npc", "spawn", "visual", "effect", "vfx", 
-    "gui", "display", "icon", "particle", "ui", "aura", 
-    "mesh", "texture", "clone", "asta", "quest", "dialog",
-    "textlabel", "label", "billboard", "humanoid"
+    "shop", "npc", "spawn", "gui", "ui", "hud", "asta", 
+    "quest", "dialog", "humanoid", "player"
 }
 
 local collectedObjects = {}
@@ -208,7 +214,7 @@ local function isCommandmentModel(obj)
     if obj:IsA("UIComponent") or obj:IsA("GuiObject") or obj:IsA("LayerCollector") then return false end
     if obj:IsDescendantOf(workspace.CurrentCamera) or obj:IsDescendantOf(game:GetService("CoreGui")) then return false end
 
-    -- Фильтр Персонажей/NPC
+    -- Фильтр Игроков и NPC
     if obj:FindFirstChildOfClass("Humanoid") then return false end
     for _, player in ipairs(Players:GetPlayers()) do
         if player.Character and obj:IsDescendantOf(player.Character) then
@@ -217,36 +223,27 @@ local function isCommandmentModel(obj)
     end
 
     local nameLower = obj.Name:lower()
+    local fullNameLower = obj:GetFullName():lower()
 
-    -- Проверка на бан-слова
-    for _, badWord in ipairs(BLACKLISTED_MAP_WORDS) do
-        if nameLower:find(badWord) then
+    -- Игнор системных объектов карты
+    for _, badWord in ipairs(IGNORE_KEYWORDS) do
+        if fullNameLower:find(badWord) then
             return false
         end
     end
 
-    -- Прямой поиск по списку заповедей
-    local isMatch = false
-    for _, commandmentName in ipairs(TARGET_NAMES) do
-        if nameLower:find(commandmentName) then
-            isMatch = true
+    -- Проверка на 10 точных названий
+    local matchFound = false
+    for _, cmdName in ipairs(EXACT_10_COMMANDMENTS) do
+        if nameLower:find(cmdName) or fullNameLower:find(cmdName) then
+            matchFound = true
             break
         end
     end
 
-    if not isMatch then return false end
+    if not matchFound then return false end
 
-    -- Проверка типа объекта
-    if not (obj:IsA("Model") or obj:IsA("BasePart") or obj:IsA("Tool")) then
-        return false
-    end
-
-    -- Ограничение размера
-    if obj:IsA("BasePart") and (obj.Size.X > 25 or obj.Size.Y > 25 or obj.Size.Z > 25) then
-        return false
-    end
-
-    return true
+    return obj:IsA("Model") or obj:IsA("BasePart") or obj:IsA("Tool")
 end
 
 local function collectCommandment(targetObj)
@@ -256,8 +253,7 @@ local function collectCommandment(targetObj)
     if not char or not rootPart then return false end
 
     collectedObjects[targetObj] = true
-
-    print("[ANIME ASTRAL] Target found: " .. targetObj.Name .. " (" .. targetObj:GetFullName() .. ")")
+    warn("[ANIME ASTRAL v1.0.8] Collecting target: " .. targetObj:GetFullName())
 
     local targetCFrame
     if targetObj:IsA("Model") then
@@ -269,7 +265,7 @@ local function collectCommandment(targetObj)
 
     if not targetCFrame then return false end
 
-    -- Телепорт персонажа прямо в предмет
+    -- ТП прямо в координаты
     for i = 1, 3 do
         pcall(function()
             char:PivotTo(targetCFrame)
@@ -278,11 +274,9 @@ local function collectCommandment(targetObj)
         task.wait(0.05)
     end
 
-    -- Активация ProximityPrompt
-    local prompt = targetObj:FindFirstChildWhichIsA("ProximityPrompt", true)
-    if not prompt and targetObj.Parent then
-        prompt = targetObj.Parent:FindFirstChildWhichIsA("ProximityPrompt", true)
-    end
+    -- Нажатие ProximityPrompt
+    local prompt = targetObj:FindFirstChildWhichIsA("ProximityPrompt", true) 
+        or (targetObj.Parent and targetObj.Parent:FindFirstChildWhichIsA("ProximityPrompt", true))
 
     if prompt then
         pcall(function()
@@ -302,7 +296,7 @@ local function collectCommandment(targetObj)
         end
     end
 
-    -- TouchInterest
+    -- Трагивание TouchInterest (для касания)
     local targetPart = targetObj:IsA("BasePart") and targetObj or targetObj:FindFirstChildWhichIsA("BasePart", true)
     if targetPart and typeof(firetouchinterest) == "function" then
         pcall(function()
@@ -312,7 +306,7 @@ local function collectCommandment(targetObj)
         end)
     end
 
-    task.wait(0.3)
+    task.wait(0.4)
     pcall(function() targetObj:Destroy() end)
     return true
 end
@@ -327,7 +321,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title = "Anime Astral",
-    SubTitle = "v1.0.6 - Priority Pickup Fix",
+    SubTitle = "v1.0.8 - Exact 10 List Fix",
     TabWidth = 160,
     Size = UDim2.fromOffset(500, 320),
     Acrylic = false,
@@ -432,7 +426,7 @@ task.spawn(function()
             if target and target.Parent then
                 CommandmentStatusParagraph:SetDesc("Status: FOUND " .. target.Name .. "! Collecting...")
                 collectCommandment(target)
-                task.wait(0.5) -- Небольшая пауза после сбора перед следующим действием
+                task.wait(0.5)
             else
                 CommandmentStatusParagraph:SetDesc("Status: No Commandments found. Hopping...")
                 if Options.AutoCommandmentServerHop and Options.AutoCommandmentServerHop.Value then
@@ -458,5 +452,5 @@ InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
 Window:SelectTab(4)
-Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.0.6 - Check Console (F9)!", Duration = 4 })
+Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.0.8 - Exact 10 List!", Duration = 4 })
 SaveManager:LoadAutoloadConfig()
