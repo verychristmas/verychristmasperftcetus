@@ -169,7 +169,7 @@ local function universalServerHop(statusCallback)
 end
 
 -- ══════════════════════════════════════════════════════════════
--- COMMANDMENT COLLECTION (With Camera & Angle Fix)
+-- COMMANDMENT COLLECTION (Strict Anti-Phantom Filter)
 -- ══════════════════════════════════════════════════════════════
 
 local EXACT_10_COMMANDMENTS = {
@@ -196,8 +196,27 @@ local function isCommandmentModel(obj)
 
     if not matchFound then return false end
 
+    -- Строгая проверка: у объекта обязательно должна быть реальная видимая деталь
     local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart", true)
     if not part then return false end
+    
+    -- Проверка на фантомы: если деталь прозрачная на 100% или её размер нулевой, отсеиваем
+    local success, transparency = pcall(function() return part.Transparency end)
+    if success and transparency >= 0.99 then return false end
+
+    local posSuccess, pos = pcall(function() return part.Position end)
+    if not posSuccess or not pos or pos.Magnitude < 1 then return false end
+
+    -- Проверяем, есть ли вообще внутри ProximityPrompt или TouchInterest (чтобы не реагировать на пустые мусорные папки)
+    local hasPromptOrTouch = false
+    for _, desc in ipairs(obj:GetDescendants()) do
+        if desc:IsA("ProximityPrompt") or desc:IsA("TouchTransmitter") then
+            hasPromptOrTouch = true
+            break
+        end
+    end
+
+    if not hasPromptOrTouch then return false end
 
     return true
 end
@@ -212,18 +231,14 @@ local function interactWithObject(targetObj)
 
     local targetPos = targetPart.Position
 
-    -- 1. ТЕПАТЕЛЬСТВО И ПОВОРОТ КАМЕРЫ (Сверху вниз, как на твоем скриншоте)
     pcall(function()
         char:PivotTo(CFrame.new(targetPos + Vector3.new(0, 0.5, 0)))
         rootPart.AssemblyLinearVelocity = Vector3.zero
-        
-        -- Ставим камеру прямо над предметом, чтобы игра засчитала видимость промпта
         Camera.CFrame = CFrame.new(targetPos + Vector3.new(0, 8, 4), targetPos)
     end)
     
-    task.wait(0.2)
+    task.wait(0.15)
 
-    -- 2. Активация ProximityPrompt
     for _, prompt in ipairs(targetObj:GetDescendants()) do
         if prompt:IsA("ProximityPrompt") then
             pcall(function()
@@ -238,7 +253,6 @@ local function interactWithObject(targetObj)
         end
     end
 
-    -- 3. Вызов RemoteEvent на случай серверного сбора
     pcall(function()
         for _, descendant in ipairs(ReplicatedStorage:GetDescendants()) do
             if descendant:IsA("RemoteEvent") then
@@ -250,7 +264,6 @@ local function interactWithObject(targetObj)
         end
     end)
 
-    -- 4. Физический касательный интерес
     if typeof(firetouchinterest) == "function" then
         pcall(function()
             firetouchinterest(rootPart, targetPart, 0)
@@ -259,7 +272,6 @@ local function interactWithObject(targetObj)
         end)
     end
 
-    -- 5. Симуляция нажатия E
     pcall(function()
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
         task.wait(0.05)
@@ -272,14 +284,15 @@ end
 local function collectCommandment(targetObj)
     if not targetObj or not targetObj.Parent then return false end
 
-    for attempt = 1, 3 do
-        if not targetObj or not targetObj.Parent then return true end
+    collectedObjects[targetObj] = true
+
+    for attempt = 1, 2 do
+        if not targetObj or not targetObj.Parent then break end
         interactWithObject(targetObj)
-        task.wait(0.3)
+        task.wait(0.2)
     end
 
-    collectedObjects[targetObj] = true
-    return false
+    return true
 end
 
 -- ══════════════════════════════════════════════════════════════
@@ -292,7 +305,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title = "Anime Astral",
-    SubTitle = "v1.3.6 - Camera Fix",
+    SubTitle = "v1.3.8 - Strict Anti-Phantom",
     TabWidth = 160,
     Size = UDim2.fromOffset(500, 320),
     Acrylic = false,
@@ -366,5 +379,5 @@ InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
 Window:SelectTab(4)
-Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.3.6 with Camera Fix!", Duration = 4 })
+Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.3.8!", Duration = 4 })
 SaveManager:LoadAutoloadConfig()
