@@ -181,7 +181,7 @@ local function genericServerHop(statusCallback)
 end
 
 -- ══════════════════════════════════════════════════════════════
--- COMMANDMENT DETECTION & COLLECTION
+-- WORLD 12 & COMMANDMENT DETECTION
 -- ══════════════════════════════════════════════════════════════
 
 local EXACT_COMMANDMENTS = {
@@ -195,20 +195,46 @@ local BLACKLISTED_MAP_WORDS = {
     "portal", "raid", "gate", "door", "zone", "teleport", 
     "shop", "npc", "spawn", "visual", "effect", "vfx", 
     "gui", "display", "icon", "particle", "ui", "aura", 
-    "mesh", "texture", "clone", "world", "folder", "map"
+    "mesh", "texture", "clone", "world", "folder", "map",
+    "textlabel", "label", "billboard", "token", "clover"
 }
 
 local blacklistedObjects = {}
 local collectedObjects = {}
 
+-- Проверка: находится ли объект в World 12
+local function isInWorld12(obj)
+    local current = obj
+    while current and current ~= workspace do
+        local name = current.Name:lower()
+        if name:find("12") or name:find("world12") or name:find("world 12") or name:find("area12") then
+            return true
+        end
+        current = current.Parent
+    end
+
+    -- Если папка с миром называется не по стандарту, проверяем глобальные контейнеры миров
+    local worldsFolder = workspace:FindFirstChild("Worlds") or workspace:FindFirstChild("Maps") or workspace:FindFirstChild("Areas")
+    if worldsFolder then
+        for _, child in ipairs(worldsFolder:GetChildren()) do
+            if child.Name:lower():find("12") and obj:IsDescendantOf(child) then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
 local function isCommandmentModel(obj)
     if not obj or not obj.Parent then return false end
     if blacklistedObjects[obj] or collectedObjects[obj] then return false end
 
-    -- 1. Игнорируем камеру, GUI и всех игроков
-    if obj:IsDescendantOf(workspace.CurrentCamera) then return false end
-    if obj:IsDescendantOf(game:GetService("CoreGui")) then return false end
+    -- Игнорируем элементы интерфейса и 2D объекты
+    if obj:IsA("UIComponent") or obj:IsA("GuiObject") or obj:IsA("LayerCollector") then return false end
+    if obj:IsDescendantOf(workspace.CurrentCamera) or obj:IsDescendantOf(game:GetService("CoreGui")) then return false end
 
+    -- Проверка на игрока
     for _, player in ipairs(Players:GetPlayers()) do
         if player.Character and obj:IsDescendantOf(player.Character) then
             return false
@@ -217,17 +243,15 @@ local function isCommandmentModel(obj)
 
     local nameLower = obj.Name:lower()
 
-    -- 2. Жесткий бан по картам, порталам, визуалу и мусору
+    -- Фильтр черного списка
     for _, badWord in ipairs(BLACKLISTED_MAP_WORDS) do
         if nameLower:find(badWord) then
             return false
         end
     end
 
-    -- 3. Проверяем точное название или прямое совпадение по заповедям
+    -- Проверка по списку заповедей
     local matched = false
-
-    -- Чистое совпадение имени (напр. "Faith", "Love", "Commandment_Faith")
     if EXACT_COMMANDMENTS[nameLower] then
         matched = true
     else
@@ -241,17 +265,18 @@ local function isCommandmentModel(obj)
 
     if not matched then return false end
 
-    -- 4. Дополнительная защита: у объекта ДОЛЖЕН быть ProximityPrompt или TouchInterest (или это Tool/MeshPart спавна)
-    local hasInteract = obj:FindFirstChildWhichIsA("ProximityPrompt", true) 
-                     or obj:FindFirstChildWhichIsA("TouchTransmitter", true)
-                     or obj:IsA("Tool")
-                     or obj:IsA("MeshPart")
-                     or obj:IsA("Part")
+    -- Ограничение: ИСКЛЮЧИТЕЛЬНО В МИРЕ 12
+    if not isInWorld12(obj) then
+        return false
+    end
 
-    if not hasInteract then return false end
+    -- Объект должен быть 3D деталькой или моделью
+    if not (obj:IsA("Model") or obj:IsA("BasePart") or obj:IsA("Tool")) then
+        return false
+    end
 
-    -- 5. Проверка размера (чтобы не прыгал на гигантские объекты)
-    if obj:IsA("BasePart") and (obj.Size.X > 20 or obj.Size.Y > 20 or obj.Size.Z > 20) then
+    -- Проверка размера (исключаем карты/порталы)
+    if obj:IsA("BasePart") and (obj.Size.X > 15 or obj.Size.Y > 15 or obj.Size.Z > 15) then
         return false
     end
 
@@ -362,7 +387,7 @@ Tabs.BallCrow:AddToggle("AutoCrowServerHop", { Title = "Auto Server Hop (Crow)",
 
 -- Commandments Tab
 Tabs.Commandments:AddSection("Auto Collect Commandments")
-Tabs.Commandments:AddToggle("AutoCollectCommandments", { Title = "Auto Collect Commandments", Default = false })
+Tabs.Commandments:AddToggle("AutoCollectCommandments", { Title = "Auto Collect Commandments (World 12 Only)", Default = false })
 Tabs.Commandments:AddToggle("AutoCommandmentServerHop", { Title = "Auto Server Hop (Commandments)", Default = false })
 local CommandmentStatusParagraph = Tabs.Commandments:AddParagraph({ Title = "Status", Content = "Waiting for activation..." })
 
@@ -417,7 +442,7 @@ task.spawn(function()
     end
 end)
 
--- Commandments Loop
+-- Commandments Loop (World 12 Only)
 task.spawn(function()
     while task.wait(0.15) do
         if Options.AutoCollectCommandments and Options.AutoCollectCommandments.Value then
@@ -431,14 +456,14 @@ task.spawn(function()
             end
 
             if target and target.Parent then
-                CommandmentStatusParagraph:SetDesc("Status: Collected " .. target.Name .. ", Hopping...")
+                CommandmentStatusParagraph:SetDesc("Status: Collected " .. target.Name .. " in World 12, Hopping...")
                 collectCommandment(target)
                 
                 if Options.AutoCommandmentServerHop and Options.AutoCommandmentServerHop.Value then
                     genericServerHop(function(msg) CommandmentStatusParagraph:SetDesc("Status: " .. msg) end)
                 end
             else
-                CommandmentStatusParagraph:SetDesc("Status: No Commandments found. Hopping...")
+                CommandmentStatusParagraph:SetDesc("Status: No Commandments found in World 12. Hopping...")
                 if Options.AutoCommandmentServerHop and Options.AutoCommandmentServerHop.Value then
                     genericServerHop(function(msg) CommandmentStatusParagraph:SetDesc("Status: " .. msg) end)
                 end
@@ -462,5 +487,5 @@ InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
 Window:SelectTab(4)
-Fluent:Notify({ Title = "Anime Astral", Content = "Exact match & RaidPortal fix applied!", Duration = 4 })
+Fluent:Notify({ Title = "Anime Astral", Content = "Locked to World 12 & UI elements removed!", Duration = 4 })
 SaveManager:LoadAutoloadConfig()
