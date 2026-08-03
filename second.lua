@@ -29,27 +29,8 @@ local function getCharacter()
 end
 
 local function getRootPart()
-    let = getCharacter()
-    return let and let:FindFirstChild("HumanoidRootPart")
-end
-
--- ══════════════════════════════════════════════════════════════
--- AUTO-CLEAN CACHE FUNCTION (АВТООЧИСТКА МУСОРА)
--- ══════════════════════════════════════════════════════════════
-
-local function cleanRobloxCache()
-    pcall(function()
-        -- Проверяем наличие функций файловой системы экзекутора
-        if delfile and makefolder and delfolder then
-            -- Удаляем временные файлы БД (которые вызывают зависания)
-            pcall(function() delfile("../rbx-storage.db-shm") end)
-            pcall(function() delfile("../rbx-storage.db-wal") end)
-            
-            -- Очищаем папки логов и кэша, если поддерживается рекурсивное удаление
-            pcall(function() delfolder("../logs") end)
-            pcall(function() delfolder("../LocalStorage") end)
-        end
-    end)
+    local char = getCharacter()
+    return char and char:FindFirstChild("HumanoidRootPart")
 end
 
 -- ══════════════════════════════════════════════════════════════
@@ -103,7 +84,7 @@ local function SendFeedback(kind, message)
 end
 
 -- ══════════════════════════════════════════════════════════════
--- SAFE SERVER HOP LOGIC (С АВТОМАТИЧЕСКОЙ ОЧИСТКОЙ)
+-- OPTIMIZED SERVER HOP (ANTI-LOG SPAM)
 -- ══════════════════════════════════════════════════════════════
 
 local isHopping = false
@@ -112,16 +93,13 @@ local function universalServerHop(statusCallback)
     if isHopping then return false end
     isHopping = true
 
-    if statusCallback then statusCallback("Cleaning cache & finding server...") end
-    
-    -- Вызываем автоочистку мусора прямо перед прыжком по серверам
-    cleanRobloxCache()
-
+    if statusCallback then statusCallback("Finding server...") end
     local placeId = game.PlaceId
     local currentJobId = game.JobId
     local req = httpRequest
 
     if not req then
+        task.wait(1)
         TeleportService:Teleport(placeId, LocalPlayer)
         isHopping = false
         return false
@@ -143,9 +121,14 @@ local function universalServerHop(statusCallback)
             for _, server in ipairs(data.data) do
                 if server.playing < server.maxPlayers and server.id ~= currentJobId then
                     if statusCallback then statusCallback("Hopping to new server...") end
+                    
+                    -- Разгружаем движок паузой, чтобы клиент не забивал логи мусором
+                    task.wait(0.5)
+                    
                     local tpSuccess = pcall(function()
                         TeleportService:TeleportToPlaceInstance(placeId, server.id, LocalPlayer)
                     end)
+                    
                     if tpSuccess then
                         task.wait(10)
                         isHopping = false
@@ -156,6 +139,7 @@ local function universalServerHop(statusCallback)
         end
     end
 
+    task.wait(1)
     pcall(function()
         TeleportService:Teleport(placeId, LocalPlayer)
     end)
@@ -266,7 +250,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title = "Anime Astral",
-    SubTitle = "v1.4.3 - Auto-Clean AFK",
+    SubTitle = "v1.4.3 - Optimized Hop",
     TabWidth = 160,
     Size = UDim2.fromOffset(500, 320),
     Acrylic = false,
@@ -343,5 +327,5 @@ InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
 Window:SelectTab(4)
-Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.4.3 (Auto-Clean)!", Duration = 4 })
+Fluent:Notify({ Title = "Anime Astral", Content = "Loaded v1.4.3 (Optimized)!", Duration = 4 })
 SaveManager:LoadAutoloadConfig()
